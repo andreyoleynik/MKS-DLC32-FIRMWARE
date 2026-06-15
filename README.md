@@ -1,4 +1,5 @@
 # MKS-DLC32-FIRMWARE — CNC-форк
+[![Boosty](https://img.shields.io/badge/Boosty-Buy_me_a_coffee-FF7143?logo=boosty&logoColor=white&style=for-the-badge)](https://boosty.to/danusha/donate)
 
 Прошивка контроллера **MKS DLC32 v2.1** (ESP32) для ЧПУ-станка со шпинделем.
 Форк ветки `MKS-DLC32-NEW-CNC` от [IDLEVEL/MKS-DLC32-FIRMWARE](https://github.com/IDLEVEL/MKS-DLC32-FIRMWARE),
