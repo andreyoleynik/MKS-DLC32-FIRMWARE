@@ -1,4 +1,8 @@
 #include "MKS_draw_ready.h"
+#if defined(ENABLE_WIFI)
+#include <WiFi.h>
+#include "../WebUI/WifiConfig.h"
+#endif
 
 MKS_PAGE_READY ready_src;
 lv_style_t bkl_color;    // main
@@ -165,8 +169,24 @@ char m_xpos_str[50] = "X:0.0";
 char m_ypos_str[50] = "Y:0.0";
 char m_zpos_str[50] = "Z:0.0";
 
-char wifi_status_str[50];
+char wifi_status_str[96];
 char wifi_ip_str[100];
+
+#if defined(ENABLE_WIFI)
+static void ready_update_wifi_icon(bool connected) {
+    if (ready_src.ready_imgbtn_wifi_status == NULL) {
+        return;
+    }
+
+    if (connected) {
+        lv_imgbtn_set_src(ready_src.ready_imgbtn_wifi_status, LV_BTN_STATE_PR, &png_wifi_connect);
+        lv_imgbtn_set_src(ready_src.ready_imgbtn_wifi_status, LV_BTN_STATE_REL, &png_wifi_connect);
+    } else {
+        lv_imgbtn_set_src(ready_src.ready_imgbtn_wifi_status, LV_BTN_STATE_PR, &png_wifi_disconnect);
+        lv_imgbtn_set_src(ready_src.ready_imgbtn_wifi_status, LV_BTN_STATE_REL, &png_wifi_disconnect);
+    }
+}
+#endif
 
 void mks_widi_show_ip(IPAddress ip, uint8_t p) { 
     if(p) {
@@ -200,12 +220,20 @@ void ready_data_updata(void) {
     lv_label_set_static_text(ready_src.ready_label_zpos, m_zpos_str);
     
     #if defined(ENABLE_WIFI)
-    if (mks_get_wifi_status() == false){
-        ready_src.ready_label_wifi_status = mks_lv_label_updata(ready_src.ready_label_wifi_status, "WIFI:Disconnect");
+    bool wifi_connected = mks_get_wifi_status();
+    bool wifi_connecting = mks_grbl.wifi_connect_status && !wifi_connected;
+
+    ready_update_wifi_icon(wifi_connected);
+
+    if (wifi_connected) {
+        snprintf(wifi_status_str, sizeof(wifi_status_str), "WIFI:%s RSSI:%d%%", WiFi.localIP().toString().c_str(), WebUI::wifi_config.getSignal(WiFi.RSSI()));
+    } else if (wifi_connecting) {
+        snprintf(wifi_status_str, sizeof(wifi_status_str), "WIFI:Connecting");
+    } else {
+        snprintf(wifi_status_str, sizeof(wifi_status_str), "WIFI:Disconnect");
     }
-    else {
-        ready_src.ready_label_wifi_status = mks_lv_label_updata(ready_src.ready_label_wifi_status, "WIFI:Connect");
-    }
+
+    ready_src.ready_label_wifi_status = mks_lv_label_updata(ready_src.ready_label_wifi_status, wifi_status_str);
     #endif
 }
 
