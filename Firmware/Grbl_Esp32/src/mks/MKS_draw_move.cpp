@@ -501,9 +501,9 @@ void move_pos_update(void) {
 
 	mpos_to_wpos(print_position);
 	
-	sprintf(xpos_str, "X:%.1f", print_position[0]);
-    sprintf(ypos_str, "Y:%.1f", print_position[1]);
-    sprintf(zpos_str, "Z:%.1f", print_position[2]);
+	sprintf(xpos_str, "X:%.2f", print_position[0]);
+	sprintf(ypos_str, "Y:%.2f", print_position[1]);
+	sprintf(zpos_str, "Z:%.2f", print_position[2]);
 
 	if( (move_page.label_xpos != NULL) && 
 		(move_page.label_ypos != NULL) &&
@@ -557,9 +557,9 @@ static void disp_label(void) {
 
 	label_for_imgbtn_name(mks_global.mks_src_1, move_page.Label_back, move_page.Back, 0, 0, "Back");
 
-	move_page.label_xpos = label_for_text(mks_global.mks_src_1, move_page.label_xpos, NULL, 93, 5, LV_ALIGN_IN_TOP_LEFT,  	"X:0");
-	move_page.label_ypos = label_for_text(mks_global.mks_src_1, move_page.label_ypos, NULL, 93, 36, LV_ALIGN_IN_TOP_LEFT,	"Y:0");
-	move_page.label_zpos = label_for_text(mks_global.mks_src_1, move_page.label_zpos, NULL, 93, 66, LV_ALIGN_IN_TOP_LEFT,  	"Z:0");
+	move_page.label_xpos = label_for_text(mks_global.mks_src_1, move_page.label_xpos, NULL, 83, 5, LV_ALIGN_IN_TOP_LEFT,  	"X:0");
+	move_page.label_ypos = label_for_text(mks_global.mks_src_1, move_page.label_ypos, NULL, 83, 36, LV_ALIGN_IN_TOP_LEFT,	"Y:0");
+	move_page.label_zpos = label_for_text(mks_global.mks_src_1, move_page.label_zpos, NULL, 83, 66, LV_ALIGN_IN_TOP_LEFT,  	"Z:0");
 
 	if(mks_grbl.move_dis == M_0_1_MM) {
 		move_page.label_len = mks_lvgl_long_sroll_label_with_wight_set_center(move_page.btn_len, move_page.label_len, 0, 0, "0.1mm", 50);

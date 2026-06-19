@@ -2,6 +2,8 @@
 
 MKS_PAGE_READY ready_src;
 lv_style_t bkl_color;    // main
+static lv_style_t ready_coord_style;
+static bool ready_coord_style_inited = false;
 
 static void disp_imgbtn(void);
 static void disp_label(void);
@@ -112,6 +114,13 @@ static void disp_img(void) {
 
 static void disp_label(void) {
 
+    if (!ready_coord_style_inited) {
+        lv_style_copy(&ready_coord_style, &lv_style_transp);
+        ready_coord_style.text.color = LV_COLOR_WHITE;
+        ready_coord_style.text.font = &lv_font_roboto_28;
+        ready_coord_style_inited = true;
+    }
+
     label_for_imgbtn_name(mks_global.mks_src_1, ready_src.ready_label_Control, ready_src.ready_imgbtn_Control, 0, 0, mc_language.control);
     label_for_imgbtn_name(mks_global.mks_src_1, ready_src.ready_label_Sculpture, ready_src.ready_imgbtn_Sculpture, 0, 0, mc_language.sculpture);
     label_for_imgbtn_name(mks_global.mks_src_1, ready_src.ready_label_Tool, ready_src.ready_imgbtn_Tool, 0, 0, mc_language.tool);
@@ -127,6 +136,13 @@ static void disp_label(void) {
     ready_src.ready_label_m_xpos = label_for_text(mks_global.mks_src,   ready_src.ready_label_m_xpos, NULL , 280, 86,  LV_ALIGN_IN_TOP_LEFT, "X:0");
     ready_src.ready_label_m_ypos = label_for_text(mks_global.mks_src,   ready_src.ready_label_m_ypos, NULL , 280, 126, LV_ALIGN_IN_TOP_LEFT, "Y:0");
     ready_src.ready_label_m_zpos = label_for_text(mks_global.mks_src,   ready_src.ready_label_m_zpos, NULL , 280, 166, LV_ALIGN_IN_TOP_LEFT, "Z:0");
+
+    lv_obj_set_style(ready_src.ready_label_xpos, &ready_coord_style);
+    lv_obj_set_style(ready_src.ready_label_ypos, &ready_coord_style);
+    lv_obj_set_style(ready_src.ready_label_zpos, &ready_coord_style);
+    lv_obj_set_style(ready_src.ready_label_m_xpos, &ready_coord_style);
+    lv_obj_set_style(ready_src.ready_label_m_ypos, &ready_coord_style);
+    lv_obj_set_style(ready_src.ready_label_m_zpos, &ready_coord_style);
 
 
     #if defined(ENABLE_WIFI)
@@ -166,18 +182,18 @@ void ready_data_updata(void) {
     static float mks_print_position[MAX_N_AXIS];
     float* print_position = system_get_mpos();
 
-    sprintf(xpos_str, "X:%.1f", print_position[0]);
-    sprintf(ypos_str, "Y:%.1f", print_position[1]);
-    sprintf(zpos_str, "Z:%.1f", print_position[2]);
+    sprintf(xpos_str, "X:%.3f", print_position[0]);
+    sprintf(ypos_str, "Y:%.3f", print_position[1]);
+    sprintf(zpos_str, "Z:%.3f", print_position[2]);
 
     lv_label_set_static_text(ready_src.ready_label_m_xpos, xpos_str);
     lv_label_set_static_text(ready_src.ready_label_m_ypos, ypos_str);
     lv_label_set_static_text(ready_src.ready_label_m_zpos, zpos_str);
 
     mpos_to_wpos(print_position);
-    sprintf(m_xpos_str, "X:%.1f", print_position[0]);
-    sprintf(m_ypos_str, "Y:%.1f", print_position[1]);
-    sprintf(m_zpos_str, "Z:%.1f", print_position[2]);
+    sprintf(m_xpos_str, "X:%.3f", print_position[0]);
+    sprintf(m_ypos_str, "Y:%.3f", print_position[1]);
+    sprintf(m_zpos_str, "Z:%.3f", print_position[2]);
 
     lv_label_set_static_text(ready_src.ready_label_xpos, m_xpos_str);
     lv_label_set_static_text(ready_src.ready_label_ypos, m_ypos_str);
