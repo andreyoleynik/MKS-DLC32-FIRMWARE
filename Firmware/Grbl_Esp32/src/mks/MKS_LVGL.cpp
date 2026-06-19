@@ -78,7 +78,12 @@ bool my_indev_touch(struct _lv_indev_drv_t * indev_drv, lv_indev_data_t * data) 
     uint16_t touchX=0, touchY=0;
     static uint16_t last_x = 0;
     static uint16_t last_y = 0;
+    static bool prev_touched = false;
+    static uint32_t next_touch_beep_allowed_ms = 0;
+    const uint16_t touch_beep_ms = 40;
+    const uint16_t touch_beep_retrigger_guard_ms = 120;
     boolean touched = tft.getTouch(&touchY, &touchX);
+    uint32_t now = millis();
 
     if(touchX > 480) {
         touchX = 480;
@@ -93,15 +98,19 @@ bool my_indev_touch(struct _lv_indev_drv_t * indev_drv, lv_indev_data_t * data) 
         data->point.x = last_x;
         data->point.y = last_y;
         data->state = LV_INDEV_STATE_PR;
-        
-        BEEP_ON;
+
+        if(!prev_touched && now >= next_touch_beep_allowed_ms) {
+            ts35_beep_on(touch_beep_ms);
+            next_touch_beep_allowed_ms = now + touch_beep_retrigger_guard_ms;
+        }
     }
     else {
         data->point.x = last_x;
         data->point.y = last_y;
         data->state = LV_INDEV_STATE_REL;
-        BEEP_OFF;
     }
+
+    prev_touched = touched;
     return false;
 }   
 

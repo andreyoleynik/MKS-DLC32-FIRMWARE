@@ -20,6 +20,8 @@ lv_obj_t *label_tool_language;
 lv_obj_t* label_board_version;
 lv_obj_t* label_Firmware_version;
 lv_obj_t* label_cpu_info;
+lv_obj_t* tool_btn_beep;
+lv_obj_t* label_tool_beep;
 
 lv_obj_t *tool_line1;
 lv_obj_t *tool_line2;
@@ -36,6 +38,16 @@ LV_IMG_DECLARE(back);
 LV_IMG_DECLARE(wifi_tool);	
 LV_IMG_DECLARE(png_back_pre);
 LV_IMG_DECLARE(png_wifi_pre);
+
+static void update_beep_button_label(void) {
+    if(label_tool_beep != NULL) {
+        if(beep_status->get()) {
+            lv_label_set_text(label_tool_beep, "Beep:ON");
+        } else {
+            lv_label_set_text(label_tool_beep, "Beep:OFF");
+        }
+    }
+}
 
 static void event_btn_tool_wifi(lv_obj_t* obj, lv_event_t event) {
 
@@ -66,6 +78,21 @@ static void event_btn_tool_language(lv_obj_t* obj, lv_event_t event) {
         mks_ui_page.mks_ui_page = MKS_UI_LANGUAGE;
         mks_ui_page.wait_count = DEFAULT_UI_COUNT;
         draw_language();
+    }
+}
+
+static void event_btn_tool_beep(lv_obj_t* obj, lv_event_t event) {
+    if (event == LV_EVENT_RELEASED) {
+        static char beep_off_val[] = "0";
+        static char beep_on_val[] = "1";
+
+        if(beep_status->get()) {
+            beep_status->setStringValue(beep_off_val);
+            ts35_beep_off();
+        } else {
+            beep_status->setStringValue(beep_on_val);
+        }
+        update_beep_button_label();
     }
 }
 
@@ -104,6 +131,10 @@ void mks_draw_tool(void) {
 #endif
 
     label_for_imgbtn_name(mks_global.mks_src_1, label_tool_language, tool_img_language, 0, 0, "Language");
+
+    tool_btn_beep = mks_lv_btn_set(mks_global.mks_src, tool_btn_beep, 120, 40, 340, 105, event_btn_tool_beep);
+    label_tool_beep = label_for_btn_name(tool_btn_beep, label_tool_beep, 0, 0, "Beep:ON");
+    update_beep_button_label();
     
 
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_board_version, 10, 120, BOARD_NAME, 400);
