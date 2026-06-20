@@ -119,6 +119,7 @@ typedef struct {
     lv_obj_t* print_Label_caveSpeed;
     lv_obj_t* print_Label_caveR;
     lv_obj_t* print_Label_caveTimes;
+    lv_obj_t* print_Label_moveSpeed;
 
     lv_obj_t* print_Label_p_suspend;
     lv_obj_t* print_Label_p_stop;
@@ -160,6 +161,7 @@ typedef struct {
     char print_pwr_str[24];
     char print_speed_str[24];
     char print_rapid_str[24];
+    char print_move_speed_str[32];
     char print_times_str[16]; // 雕刻次数
     
     float x_pos = 0;

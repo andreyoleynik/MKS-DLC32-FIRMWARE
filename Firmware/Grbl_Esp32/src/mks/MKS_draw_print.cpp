@@ -158,6 +158,7 @@ void mks_draw_print(void) {
     print_src.print_Label_caveSpeed =  label_for_text(mks_global.mks_src, print_src.print_Label_caveSpeed, NULL, 20, 82, LV_ALIGN_IN_TOP_LEFT, "Feed:0%");
     print_src.print_Label_power = label_for_text(mks_global.mks_src, print_src.print_Label_power, NULL, 178, 82, LV_ALIGN_IN_TOP_LEFT, "Spindle:0%");
     print_src.print_Label_caveR =  label_for_text(mks_global.mks_src, print_src.print_Label_caveR, NULL, 338, 82, LV_ALIGN_IN_TOP_LEFT, "Rapid:0%");
+    print_src.print_Label_moveSpeed = label_for_text(mks_global.mks_src, print_src.print_Label_moveSpeed, NULL, 20, 101, LV_ALIGN_IN_TOP_LEFT, "Move:0 mm/min");
 
     print_src.print_Label_wpos = label_for_text(mks_global.mks_src, print_src.print_Label_wpos, NULL, 40, 118, LV_ALIGN_IN_TOP_LEFT, "Wpos");
     print_src.print_Label_mpos = label_for_text(mks_global.mks_src, print_src.print_Label_mpos, NULL, 280, 118, LV_ALIGN_IN_TOP_LEFT, "Mpos");
@@ -1079,6 +1080,9 @@ void mks_print_data_updata(void) {
 
     snprintf(print_data_updata.print_rapid_str, sizeof(print_data_updata.print_rapid_str), "Rapid:%2d%%", sys_rt_r_override);
     print_src.print_Label_caveR = mks_lv_label_updata(print_src.print_Label_caveR, print_data_updata.print_rapid_str);
+
+    snprintf(print_data_updata.print_move_speed_str, sizeof(print_data_updata.print_move_speed_str), "Move:%.0f mm/min", st_get_realtime_rate());
+    print_src.print_Label_moveSpeed = mks_lv_label_updata(print_src.print_Label_moveSpeed, print_data_updata.print_move_speed_str);
 
     snprintf(w_x_pos, sizeof(w_x_pos), "X:%7.2f", work_pos[0]);
     print_src.print_Label_x_pos = mks_lv_label_updata(print_src.print_Label_x_pos, w_x_pos);
