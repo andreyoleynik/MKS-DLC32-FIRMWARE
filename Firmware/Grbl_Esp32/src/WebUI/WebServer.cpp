@@ -462,12 +462,14 @@ namespace WebUI {
             _webserver->send(200, "text/plain", "Invalid command");
             return;
         }
-        //if it is internal command [ESPXXX]<parameter>
-        cmd.trim();
-        int ESPpos = cmd.indexOf("[ESP");
+        // Keep raw bytes (e.g. 0x18) intact for realtime commands.
+        // Use a trimmed copy only for internal [ESPxxx] parsing.
+        String espCmd = cmd;
+        espCmd.trim();
+        int ESPpos = espCmd.indexOf("[ESP");
         if (ESPpos > -1) {
             char line[256];
-            strncpy(line, cmd.c_str(), 255);
+            strncpy(line, espCmd.c_str(), 255);
             ESPResponseStream* espresponse = silent ? NULL : new ESPResponseStream(_webserver);
             Error              err         = system_execute_line(line, espresponse, auth_level);
             String             answer;
@@ -1081,6 +1083,8 @@ namespace WebUI {
     void Web_Server::WebUpdateUpload() {
         static size_t   last_upload_update;
         static uint32_t maxSketchSpace = 0;
+        static size_t   otaSketchSpace = 0;
+        static uint32_t firmwareSize    = 0;
 
         //only admin can update FW
         if (is_authenticated() != AuthenticationLevel::LEVEL_ADMIN) {
@@ -1098,7 +1102,8 @@ namespace WebUI {
                     _upload_status     = UploadStatusType::ONGOING;
                     String sizeargname = upload.filename + "S";
                     if (_webserver->hasArg(sizeargname)) {
-                        maxSketchSpace = _webserver->arg(sizeargname).toInt();
+                        firmwareSize = _webserver->arg(sizeargname).toInt();
+                        maxSketchSpace = firmwareSize;
                     }
                     //check space
                     size_t flashsize = 0;
@@ -1106,18 +1111,19 @@ namespace WebUI {
                         const esp_partition_t* partition = esp_ota_get_next_update_partition(NULL);
                         if (partition) {
                             flashsize = partition->size;
+                            otaSketchSpace = partition->size;
                         }
                     }
                     if (flashsize < maxSketchSpace) {
                         pushError(ESP_ERROR_NOT_ENOUGH_SPACE, "Upload rejected, not enough space");
                         _upload_status = UploadStatusType::FAILED;
-                        grbl_send(CLIENT_ALL, "[MSG:Update cancelled]\r\n");
+                        grbl_sendf(CLIENT_ALL, "[MSG:Update cancelled OTA:%u FW:%u]\r\n", uint32_t(otaSketchSpace), uint32_t(firmwareSize));
                     }
                     if (_upload_status != UploadStatusType::FAILED) {
                         last_upload_update = 0;
                         if (!Update.begin()) {  //start with max available size
                             _upload_status = UploadStatusType::FAILED;
-                            grbl_send(CLIENT_ALL, "[MSG:Update cancelled]\r\n");
+                            grbl_sendf(CLIENT_ALL, "[MSG:Update cancelled OTA:%u FW:%u]\r\n", uint32_t(otaSketchSpace), uint32_t(firmwareSize));
                             pushError(ESP_ERROR_NOT_ENOUGH_SPACE, "Upload rejected, not enough space");
                         } else {
                             grbl_send(CLIENT_ALL, "\n[MSG:Update 0%]\r\n");

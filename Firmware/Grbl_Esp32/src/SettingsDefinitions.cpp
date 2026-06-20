@@ -23,6 +23,7 @@ AxisMaskSetting* stallguard_debug_mask;
 
 IntSetting* language_select;
 FlagSetting* beep_status; // mks-fix
+FlagSetting* sculpture_list_mode;
 
 
 
@@ -342,6 +343,7 @@ void make_settings() {
 
     language_select              = new IntSetting(GRBL, WG, "40", "Language", DEFAULT_LANGUAGE_STATUS, 0, 2);
     beep_status                  = new FlagSetting(GRBL, WG, "38", "beep_status", DEFAULT_BEEP_STATUS);
+    sculpture_list_mode          = new FlagSetting(GRBL, WG, "41", "sculpture_list_mode", DEFAULT_SCULPTURE_LIST_MODE);
     
     // Spindle Settings
     spindle_type =

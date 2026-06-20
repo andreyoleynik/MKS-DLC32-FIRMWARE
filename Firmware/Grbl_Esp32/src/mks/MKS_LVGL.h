@@ -18,6 +18,7 @@ typedef enum {
     M_0_1_MM,           // move 0.1mm
     M_1_MM,             // move 1mm
     M_10_MM,            // move 10mm
+    M_50_MM,            // move 50mm
 }GRBL_MOVE_DIS;
 
 typedef enum {

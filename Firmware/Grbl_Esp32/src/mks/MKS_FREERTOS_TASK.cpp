@@ -1,4 +1,5 @@
 #include "MKS_FREERTOS_TASK.h"
+#include "MKS_draw_print.h"
 
 #define DISP_TASK_STACK                 4096*2
 #define DISP_TASK_PRO                   2
@@ -77,6 +78,29 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
 uint8_t count_updata = 0;
 uint8_t fram_count = 0;
 static void mks_page_data_updata(void) { 
+#ifdef ENABLE_SD_CARD
+    // If SD print started outside touch UI (e.g. WebUI), force switch in LVGL task.
+    if ((get_sd_state(false) == SDState::BusyPrinting) &&
+        (mks_ui_page.mks_ui_page != MKS_UI_Pring)) {
+        mks_ui_page.mks_ui_page = MKS_UI_PAGE_LOADING;
+        mks_ui_page.wait_count  = DEFAULT_UI_COUNT;
+        mks_lv_clean_ui();
+        mks_draw_print();
+        return;
+    }
+
+    // If SD print was stopped remotely while print page is open, return to ready page.
+    if ((mks_ui_page.mks_ui_page == MKS_UI_Pring) &&
+        (get_sd_state(false) != SDState::BusyPrinting)) {
+        mks_grbl.is_mks_ts35_flag = false;
+        mks_grbl.carve_times      = 0;
+        mks_ui_page.mks_ui_page   = MKS_UI_PAGE_LOADING;
+        mks_ui_page.wait_count    = DEFAULT_UI_COUNT;
+        mks_lv_clean_ui();
+        mks_draw_ready();
+        return;
+    }
+#endif
     
     if(mks_ui_page.mks_ui_page == MKS_UI_PAGE_LOADING) {
         /* Do not updata */

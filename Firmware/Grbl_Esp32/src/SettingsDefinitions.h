@@ -29,6 +29,7 @@ extern AxisMaskSetting* homing_cycle[MAX_N_AXIS];
 
 extern IntSetting* language_select;
 extern FlagSetting* beep_status;
+extern FlagSetting* sculpture_list_mode;
 
 extern FlagSetting* step_enable_invert;
 extern FlagSetting* limit_invert;

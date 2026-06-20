@@ -219,6 +219,9 @@ static void event_handler_len_set(void){
 		mks_grbl.move_dis = M_10_MM;
 		lv_label_set_text(move_page.label_len, "10mm");
 	}else if(mks_grbl.move_dis == M_10_MM) {
+		mks_grbl.move_dis = M_50_MM;
+		lv_label_set_text(move_page.label_len, "50mm");
+	}else if(mks_grbl.move_dis == M_50_MM) {
 		mks_grbl.move_dis = M_0_1_MM;
 		lv_label_set_text(move_page.label_len, "0.1mm");
 	}
@@ -350,8 +353,8 @@ static void disp_imgbtn_1(void) {
 	move_page.knife = lv_imgbtn_creat_mks(mks_global.mks_src_1, move_page.knife, &png_knife_pre, &png_knife, LV_ALIGN_IN_TOP_LEFT, 310, 5, event_handler);
 	move_page.next = lv_imgbtn_creat_mks(mks_global.mks_src_1, move_page.next, &png_l_next_pre, &png_l_next, LV_ALIGN_IN_TOP_LEFT, 380, 5, disp_down_set);
 
-	move_page.label_xy_clear = label_for_imgbtn_name(mks_global.mks_src_1, move_page.label_xy_clear, move_page.xy_clear, 0, 0, "XY Clear");
-	move_page.label_z_clear = label_for_imgbtn_name(mks_global.mks_src_1, move_page.label_z_clear, move_page.z_clear, 0, 0, "Z Clear");
+	move_page.label_xy_clear = label_for_imgbtn_name(mks_global.mks_src_1, move_page.label_xy_clear, move_page.xy_clear, 0, 0, "XYClear");
+	move_page.label_z_clear = label_for_imgbtn_name(mks_global.mks_src_1, move_page.label_z_clear, move_page.z_clear, 0, 0, "ZClear");
 	move_page.label_knife = label_for_imgbtn_name(mks_global.mks_src_1, move_page.label_knife, move_page.knife, 0, 0, "Knife");
 	move_page.label_next = label_for_imgbtn_name(mks_global.mks_src_1, move_page.label_next, move_page.next, 0, 0, "Next");
 }
@@ -433,6 +436,8 @@ static void disp_label(void) {
 		move_page.label_len = mks_lvgl_long_sroll_label_with_wight_set_center(move_page.btn_len, move_page.label_len, 0, 0, "1mm", 50);
 	}else if(mks_grbl.move_dis == M_10_MM) {
 		move_page.label_len = mks_lvgl_long_sroll_label_with_wight_set_center(move_page.btn_len, move_page.label_len, 0, 0, "10mm", 50);
+	}else if(mks_grbl.move_dis == M_50_MM) {
+		move_page.label_len = mks_lvgl_long_sroll_label_with_wight_set_center(move_page.btn_len, move_page.label_len, 0, 0, "50mm", 50);
 	}
 	
 	if(mks_grbl.move_speed == LOW_SPEED) {

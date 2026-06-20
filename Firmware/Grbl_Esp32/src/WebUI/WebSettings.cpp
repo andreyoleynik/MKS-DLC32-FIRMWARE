@@ -32,6 +32,12 @@
 #include "WebServer.h"
 #include <string.h>
 
+#ifdef TFT_LVGL_UI
+#include "../mks/MKS_draw_lvgl.h"
+#include "../mks/MKS_draw_print.h"
+#include "../mks/MKS_draw_ready.h"
+#endif
+
 namespace WebUI {
 
 #ifdef ENABLE_WIFI
@@ -681,6 +687,25 @@ namespace WebUI {
     }
 
 #ifdef ENABLE_SD_CARD
+#ifdef TFT_LVGL_UI
+    static void syncTs35PrintUiOnRemoteRun() {
+        mks_grbl.is_mks_ts35_flag = true;
+        if (mks_ui_page.mks_ui_page != MKS_UI_Pring) {
+            mks_lv_clean_ui();
+            mks_draw_print();
+        }
+    }
+
+    static void syncTs35ReadyUiOnRemoteStop() {
+        mks_grbl.is_mks_ts35_flag = false;
+        mks_grbl.carve_times = 0;
+        if (mks_ui_page.mks_ui_page != MKS_UI_Ready) {
+            mks_lv_clean_ui();
+            mks_draw_ready();
+        }
+    }
+#endif
+
     static Error openSDFile(char* parameter) {
         if (*parameter == '\0') {
             webPrintln("Missing file name!");
@@ -750,6 +775,29 @@ namespace WebUI {
         // execute the first line now; Protocol.cpp handles later ones when SD_ready_next
         report_status_message(execute_line(fileLine, SD_client, SD_auth_level), SD_client);
         report_realtime_status(SD_client);
+
+#ifdef TFT_LVGL_UI
+        syncTs35PrintUiOnRemoteRun();
+#endif
+        webPrintln("");
+        return Error::Ok;
+    }
+
+    static Error stopSDFile(char* parameter, AuthenticationLevel auth_level) {  // ESP222
+        SDState state = get_sd_state(false);
+        if (state != SDState::BusyPrinting) {
+            webPrintln("No active SD print");
+            return Error::FsFailedBusy;
+        }
+
+        mc_reset();
+        sys_rt_f_override = FeedOverride::Default;
+        sys_rt_r_override = RapidOverride::Default;
+        sys_rt_s_override = SpindleSpeedOverride::Default;
+
+#ifdef TFT_LVGL_UI
+        syncTs35ReadyUiOnRemoteStop();
+#endif
         webPrintln("");
         return Error::Ok;
     }
@@ -1091,6 +1139,7 @@ namespace WebUI {
 #ifdef ENABLE_SD_CARD
         new WebCommand("path", WEBCMD, WU, "ESP221", "SD/Show", showSDFile);
         new WebCommand("path", WEBCMD, WU, "ESP220", "SD/Run", runSDFile);
+    new WebCommand(NULL, WEBCMD, WU, "ESP222", "SD/Stop", stopSDFile, anyState);
         new WebCommand("file_or_directory_path", WEBCMD, WU, "ESP215", "SD/Delete", deleteSDObject);
         new WebCommand(NULL, WEBCMD, WU, "ESP210", "SD/List", listSDFiles);
 #endif

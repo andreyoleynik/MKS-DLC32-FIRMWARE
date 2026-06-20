@@ -215,6 +215,10 @@
 #    define DEFAULT_SPINDLE_ENABLE_OFF_WITH_ZERO_SPEED 0
 #endif
 
+#ifndef DEFAULT_SCULPTURE_LIST_MODE
+#    define DEFAULT_SCULPTURE_LIST_MODE 1
+#endif
+
 // ================  user settings =====================
 #ifndef DEFAULT_USER_INT_80
 #    define DEFAULT_USER_INT_80 0  // $80 User integer setting

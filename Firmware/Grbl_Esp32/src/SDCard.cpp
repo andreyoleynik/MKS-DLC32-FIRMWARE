@@ -117,33 +117,78 @@ void mks_listDir(fs::FS& fs, const char* dirname, uint8_t levels) {
         // ...找不到文件夹（根文件夹）
         return;
     }
-    File file = root.openNextFile(); 
-    
-    while(file) {
+    File file = root.openNextFile();
+    uint16_t match_count = 0;
 
-        if (file.isDirectory()) {
-            if (levels) {
-                mks_listDir(fs, file.name(), levels - 1);
-            }
-        } else {
-
-            memcpy(mks_filename_check_str, file.name(), 255);
+    // Pass 1: count all matching files.
+    while (file) {
+        if (!file.isDirectory()) {
+            memset(mks_filename_check_str, 0, sizeof(mks_filename_check_str));
             strcpy(mks_filename_check_str, file.name());
-
-            if(filename_check(mks_filename_check_str, strlen(mks_filename_check_str)) == true) {
-                if((mks_file_list.file_count >= ((mks_file_list.file_page * MKS_FILE_NUM)-(MKS_FILE_NUM))) 
-                    && (mks_file_list.file_count < (mks_file_list.file_page * MKS_FILE_NUM))) {
-                    memset(mks_file_list.filename_str[mks_file_list.file_begin_num], 0, sizeof(mks_file_list.filename_str[mks_file_list.file_begin_num]));
-                    strcpy(mks_file_list.filename_str[mks_file_list.file_begin_num], mks_filename_check_str);
-                    mks_file_list.file_size[mks_file_list.file_begin_num] = file.size();
-                    draw_filexx(mks_file_list.file_begin_num, mks_file_list.filename_str[mks_file_list.file_begin_num]);
-                    mks_file_list.file_begin_num++;
-                }
-                mks_file_list.file_count++;
-                if(mks_file_list.file_count >= (mks_file_list.file_page * MKS_FILE_NUM)) return;
+            if (filename_check(mks_filename_check_str, strlen(mks_filename_check_str)) == true) {
+                match_count++;
             }
         }
-        file =  root.openNextFile();
+        file = root.openNextFile();
+    }
+
+    mks_file_list.file_count = match_count;
+    if (match_count == 0) {
+        return;
+    }
+
+    uint16_t page_offset = (mks_file_list.file_page - 1) * MKS_FILE_NUM;
+    if (page_offset >= match_count) {
+        return;
+    }
+
+    uint16_t newest_index = match_count - 1 - page_offset;
+    uint16_t oldest_index = (newest_index >= (MKS_FILE_NUM - 1)) ? (newest_index - (MKS_FILE_NUM - 1)) : 0;
+
+    char page_names[MKS_FILE_NUM][MKS_FILE_NAME_LENGTH];
+    uint32_t page_sizes[MKS_FILE_NUM] = {0};
+    bool page_used[MKS_FILE_NUM] = {false};
+
+    root.close();
+    root = fs.open(dirname);
+    if (!root || !root.isDirectory()) {
+        return;
+    }
+
+    file = root.openNextFile();
+    uint16_t seen_index = 0;
+
+    // Pass 2: collect entries for the current page in reverse order (newest at top).
+    while (file) {
+        if (!file.isDirectory()) {
+            memset(mks_filename_check_str, 0, sizeof(mks_filename_check_str));
+            strcpy(mks_filename_check_str, file.name());
+
+            if (filename_check(mks_filename_check_str, strlen(mks_filename_check_str)) == true) {
+                if (seen_index >= oldest_index && seen_index <= newest_index) {
+                    uint8_t slot = newest_index - seen_index;
+                    if (slot < MKS_FILE_NUM) {
+                        memset(page_names[slot], 0, sizeof(page_names[slot]));
+                        strncpy(page_names[slot], mks_filename_check_str, MKS_FILE_NAME_LENGTH - 1);
+                        page_sizes[slot] = file.size();
+                        page_used[slot] = true;
+                    }
+                }
+                seen_index++;
+            }
+        }
+        file = root.openNextFile();
+    }
+
+    for (uint8_t i = 0; i < MKS_FILE_NUM; i++) {
+        if (!page_used[i]) {
+            continue;
+        }
+        memset(mks_file_list.filename_str[mks_file_list.file_begin_num], 0, sizeof(mks_file_list.filename_str[mks_file_list.file_begin_num]));
+        strncpy(mks_file_list.filename_str[mks_file_list.file_begin_num], page_names[i], MKS_FILE_NAME_LENGTH - 1);
+        mks_file_list.file_size[mks_file_list.file_begin_num] = page_sizes[i];
+        draw_filexx(mks_file_list.file_begin_num, mks_file_list.filename_str[mks_file_list.file_begin_num]);
+        mks_file_list.file_begin_num++;
     }
 }
 

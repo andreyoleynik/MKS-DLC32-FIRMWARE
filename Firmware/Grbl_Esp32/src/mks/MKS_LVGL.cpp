@@ -140,7 +140,7 @@ void mks_grbl_parg_init(void) {
     set_language(1); 
     
     mks_grbl.light_status = GRBL_Light_Off;
-    mks_grbl.move_dis = M_1_MM;
+    mks_grbl.move_dis = M_10_MM;
     mks_grbl.move_speed = HIGHT_SPEED;
     mks_grbl.bl_status = BL_NONE;               
     mks_grbl.is_mks_ts35_flag = false;
