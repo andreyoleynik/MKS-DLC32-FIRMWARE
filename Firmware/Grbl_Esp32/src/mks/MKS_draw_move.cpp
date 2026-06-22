@@ -30,6 +30,8 @@ enum {
 	ID_M_POS,
 	ID_M_XY_HOME,
 	ID_M_Z_HOME,
+	ID_M_XY_HHOME,
+	ID_M_Z_HHOME,
 	ID_M_XY_POS,
 	ID_M_Z_POS,
 	ID_M_HHOME,
@@ -53,6 +55,8 @@ static uint8_t get_event(lv_obj_t* obj) {
     else if (obj == move_page.m_unlock)     	return ID_M_UNLOCK;
 	else if (obj == move_page.xy_home)     		return ID_M_XY_HOME;
 	else if (obj == move_page.z_home)     		return ID_M_Z_HOME;
+	else if (obj == move_page.xy_hhome)     	return ID_M_XY_HHOME;
+	else if (obj == move_page.z_hhome)      	return ID_M_Z_HHOME;
 	else if (obj == move_page.Back)     		return ID_M_BACK;
 	else if (obj == move_page.btn_len)     		return ID_M_STEP;
 	else if (obj == move_page.btn_speed)		return ID_M_SPEED;
@@ -228,7 +232,7 @@ static void set_xy_pos(lv_obj_t* obj, lv_event_t event) {
 
 	if(event != LV_EVENT_RELEASED) return;
 	set_click_status(false);
-	if(sys.state == State::Idle && mks_get_motor_status() ) {
+	if(sys.state == State::Idle) {
 		MKS_GRBL_CMD_SEND("G92X0Y0\n");
 		mks_draw_common_popup_info_com("Info", "Positioning success", " ", event_henadle_pupup_com);
 	}else {
@@ -239,7 +243,7 @@ static void set_xy_pos(lv_obj_t* obj, lv_event_t event) {
 static void set_z_pos(lv_obj_t* obj, lv_event_t event) {
 	if(event != LV_EVENT_RELEASED) return;
 	set_click_status(false);
-	if(sys.state == State::Idle && mks_get_motor_status() ) {
+	if(sys.state == State::Idle) {
 		MKS_GRBL_CMD_SEND("G92Z0\n");
 		mks_draw_common_popup_info_com("Info", "Positioning success", " ", event_henadle_pupup_com);
 	}else {
@@ -253,7 +257,7 @@ static void set_xyz_pos(lv_obj_t* obj, lv_event_t event) {
 		
 		set_click_status(false);
 
-		if(sys.state == State::Idle && mks_get_motor_status() ) {
+		if(sys.state == State::Idle) {
 			MKS_GRBL_CMD_SEND("G92X0Y0Z0\n");
 			mks_draw_common_popup_info_com("Info", "Positioning success", " ", event_henadle_pupup_com);
 		}else {
@@ -276,7 +280,7 @@ void set_knife1() {
 }
 
 
-static void set_hhome(void) {
+static void set_hhome_xy(void) {
 
 	MKS_GRBL_CMD_SEND("M5\n");
 	mks_grbl.power_persen = P_0_PERSEN;
@@ -289,6 +293,23 @@ static void set_hhome(void) {
 
 	if(hard_limits->get() && homing_enable->get()) {
 		MKS_GRBL_CMD_SEND("$H\n");
+		ui_move_ctrl.hard_homing_status = HOMING_START;
+		mks_draw_common_pupup_info("Info", "Homing...", " ");
+	}
+	else {
+		mks_draw_common_popup_info_com("Warning", "No Enable Hard Homing...", " ", event_henadle_pupup_com);
+	}
+}
+
+static void set_hhome_z(void) {
+
+	MKS_GRBL_CMD_SEND("M5\n");
+	mks_grbl.power_persen = P_0_PERSEN;
+
+	set_click_status(false);
+
+	if(hard_limits->get() && homing_enable->get()) {
+		MKS_GRBL_CMD_SEND("$HZ\n");
 		ui_move_ctrl.hard_homing_status = HOMING_START;
 		mks_draw_common_pupup_info("Info", "Homing...", " ");
 	}
@@ -384,7 +405,9 @@ static void event_handler(lv_obj_t* obj, lv_event_t event) {
 		case ID_M_SPEED	:	set_speed();		break;
 		case ID_M_UNLOCK:	mc_unlock();		break;
 		case ID_M_HOME	:	set_home();			break;
-		case ID_M_HHOME	:	set_hhome();		break;
+		case ID_M_HHOME	:	set_hhome_xy();		break;
+		case ID_M_XY_HHOME:	set_hhome_xy();		break;
+		case ID_M_Z_HHOME:	set_hhome_z();		break;
 		case ID_M_BACK	: 	set_move_back(); 	break;
 		case ID_M_XY_HOME:	set_xy_home(); 		break;
 		case ID_M_Z_HOME:	set_z_home();		break;
@@ -438,8 +461,11 @@ static void disp_imgbtn(void) {
 	move_page.z_n = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.z_n, &png_z_up_pre, &png_z_up, LV_ALIGN_IN_TOP_LEFT, 244, 10, event_handler);
 	move_page.z_p = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.z_p, &png_z_down_pre, &png_z_down, LV_ALIGN_IN_TOP_LEFT, 244, 138, event_handler);
 
-	move_page.xy_home = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.xy_home, &png_xyhome_pre, &png_xyhome, LV_ALIGN_IN_TOP_LEFT, 88, 74, event_handler);
-	move_page.z_home = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.z_home, &png_z_home_pre, &png_z_home, LV_ALIGN_IN_TOP_LEFT, 244, 74, event_handler);
+	move_page.xy_home = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.xy_home, &go_zero_xy_pre, &go_zero_xy, LV_ALIGN_IN_TOP_LEFT, 88, 74, event_handler);
+	move_page.z_home = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.z_home, &go_zero_z_pre, &go_zero_z, LV_ALIGN_IN_TOP_LEFT, 244, 74, event_handler);
+
+	move_page.xy_hhome = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.xy_hhome, &png_xyhome_pre, &png_xyhome, LV_ALIGN_IN_TOP_LEFT, 10, 10, event_handler);
+	move_page.z_hhome = lv_imgbtn_creat_mks(mks_global.mks_src_2, move_page.z_hhome, &png_z_home_pre, &png_z_home, LV_ALIGN_IN_TOP_LEFT, 166, 10, event_handler);
 }
 
 static void disp_imgbtn_1_del(void) {

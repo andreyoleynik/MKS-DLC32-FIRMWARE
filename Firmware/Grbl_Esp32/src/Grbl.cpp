@@ -149,6 +149,12 @@ static const char* reset_reason_text(esp_reset_reason_t reason) {
             return "Brownout";
         case ESP_RST_SDIO:
             return "SDIO";
+        case ESP_RST_PANIC:
+            return "Panic/Crash";
+        case ESP_RST_INT_WDT:
+            return "Interrupt watchdog";
+        case ESP_RST_TASK_WDT:
+            return "Task watchdog";
         default:
             return "Unknown";
     }

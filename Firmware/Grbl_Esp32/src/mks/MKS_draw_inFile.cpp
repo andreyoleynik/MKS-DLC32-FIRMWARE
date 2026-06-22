@@ -165,7 +165,7 @@ static void event_henadle_pupup_com(lv_obj_t* obj, lv_event_t event) {
 
 static void set_xy_pos(lv_obj_t* obj, lv_event_t event) {
 	if(event != LV_EVENT_RELEASED) return;
-	if(sys.state == State::Idle && mks_get_motor_status() ) {
+	if(sys.state == State::Idle) {
 		MKS_GRBL_CMD_SEND("G92X0Y0\n");
 		mks_draw_common_popup_info_com("Info", "Positioning success", " ", event_henadle_pupup_com);
 	}else {
@@ -175,7 +175,7 @@ static void set_xy_pos(lv_obj_t* obj, lv_event_t event) {
 
 static void set_z_pos(lv_obj_t* obj, lv_event_t event) {
 	if(event != LV_EVENT_RELEASED) return;
-	if(sys.state == State::Idle && mks_get_motor_status() ) {
+	if(sys.state == State::Idle) {
 		MKS_GRBL_CMD_SEND("G92Z0\n");
 		mks_draw_common_popup_info_com("Info", "Positioning success", " ", event_henadle_pupup_com);
 	}else {
@@ -188,7 +188,7 @@ static void set_xyz_pos(lv_obj_t* obj, lv_event_t event) {
 	if(event == LV_EVENT_RELEASED ) {
 		set_click_status(false);
 
-		if(sys.state == State::Idle && mks_get_motor_status() ) {
+		if(sys.state == State::Idle) {
 			MKS_GRBL_CMD_SEND("G92X0Y0Z0\n");
 			mks_draw_common_popup_info_com("Info", "Positioning success", " ", event_henadle_pupup_com);
 		}else {

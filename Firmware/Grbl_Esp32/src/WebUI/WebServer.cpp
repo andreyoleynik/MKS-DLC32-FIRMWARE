@@ -40,6 +40,10 @@
 #    include <StreamString.h>
 #    include <Update.h>
 #    include <esp_wifi_types.h>
+#    include <esp_partition.h>
+#    if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+#        include <esp_core_dump.h>
+#    endif
 #    ifdef ENABLE_MDNS
 #        include <ESPmDNS.h>
 #    endif
@@ -50,6 +54,12 @@
 #        include <DNSServer.h>
 
 namespace WebUI {
+#    if defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+    static constexpr bool CORE_DUMP_API_AVAILABLE = false;
+#    else
+    static constexpr bool CORE_DUMP_API_AVAILABLE = true;
+#    endif
+
     const byte DNS_PORT = 53;
     DNSServer  dnsServer;
 }
@@ -184,6 +194,8 @@ namespace WebUI {
         //web commands
         _webserver->on("/command", HTTP_ANY, handle_web_command);
         _webserver->on("/command_silent", HTTP_ANY, handle_web_command_silent);
+        _webserver->on("/coredump/info", HTTP_GET, handle_coredump_info);
+        _webserver->on("/coredump.bin", HTTP_GET, handle_coredump_download);
 
         //SPIFFS
         _webserver->on("/files", HTTP_ANY, handleFileList, SPIFFSFileupload);
@@ -558,6 +570,129 @@ namespace WebUI {
                 }
             }
             _webserver->send(200, "text/plain", hasError?"Error":"");
+        }
+    }
+
+    void Web_Server::handle_coredump_info() {
+        if (is_authenticated() == AuthenticationLevel::LEVEL_GUEST) {
+            _webserver->send(401, "application/json", "{\"status\":\"error\",\"message\":\"Authentication failed\"}");
+            return;
+        }
+
+        size_t    image_addr = 0;
+        size_t    image_size = 0;
+        esp_err_t err        = ESP_ERR_NOT_SUPPORTED;
+        if (CORE_DUMP_API_AVAILABLE) {
+    #if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+            err = esp_core_dump_image_get(&image_addr, &image_size);
+    #endif
+        }
+        bool      has_image  = (err == ESP_OK) && (image_size > 0);
+
+        const esp_partition_t* core_part =
+            esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+
+        String json = "{";
+        json += "\"status\":\"ok\",";
+        json += "\"coreDumpApiAvailable\":";
+        json += CORE_DUMP_API_AVAILABLE ? "true" : "false";
+        json += ",";
+        json += "\"configuredToFlash\":";
+#if defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH)
+        json += "true";
+#else
+        json += "false";
+#endif
+        json += ",\"partitionPresent\":";
+        json += core_part ? "true" : "false";
+        json += ",\"imageAvailable\":";
+        json += has_image ? "true" : "false";
+        json += ",\"espErr\":";
+        json += String((int)err);
+        json += ",\"address\":";
+        json += String((unsigned)image_addr);
+        json += ",\"size\":";
+        json += String((unsigned)image_size);
+        if (core_part) {
+            json += ",\"partitionAddress\":";
+            json += String((unsigned)core_part->address);
+            json += ",\"partitionSize\":";
+            json += String((unsigned)core_part->size);
+        }
+        json += "}";
+
+        _webserver->send(200, "application/json", json);
+    }
+
+    void Web_Server::handle_coredump_download() {
+        if (is_authenticated() == AuthenticationLevel::LEVEL_GUEST) {
+            _webserver->send(401, "text/plain", "Authentication failed");
+            return;
+        }
+
+        if (!CORE_DUMP_API_AVAILABLE) {
+            _webserver->send(501, "text/plain", "Core dump is disabled in this firmware build");
+            return;
+        }
+
+        size_t    image_addr = 0;
+        size_t    image_size = 0;
+    #if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+        esp_err_t err        = esp_core_dump_image_get(&image_addr, &image_size);
+    #else
+        esp_err_t err        = ESP_ERR_NOT_SUPPORTED;
+    #endif
+        if ((err != ESP_OK) || (image_size == 0)) {
+            _webserver->send(404, "text/plain", "No core dump image in flash");
+            return;
+        }
+
+        const esp_partition_t* core_part =
+            esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+        if (!core_part) {
+            _webserver->send(500, "text/plain", "coredump partition not found");
+            return;
+        }
+
+        if ((image_addr < core_part->address) || ((image_addr + image_size) > (core_part->address + core_part->size))) {
+            _webserver->send(500, "text/plain", "core dump image outside coredump partition");
+            return;
+        }
+
+        size_t offset = 0;
+        if (_webserver->hasArg("offset")) {
+            offset = strtoul(_webserver->arg("offset").c_str(), NULL, 10);
+        }
+        if (offset >= image_size) {
+            _webserver->send(416, "text/plain", "offset out of range");
+            return;
+        }
+
+        size_t length = image_size - offset;
+        if (_webserver->hasArg("length")) {
+            size_t requested = strtoul(_webserver->arg("length").c_str(), NULL, 10);
+            if ((requested > 0) && (requested < length)) {
+                length = requested;
+            }
+        }
+
+        size_t part_offset = (image_addr - core_part->address) + offset;
+
+        _webserver->sendHeader("Content-Disposition", "attachment; filename=\"coredump.bin\"");
+        _webserver->setContentLength(length);
+        _webserver->send(200, "application/octet-stream", "");
+
+        uint8_t buf[1024];
+        size_t  sent = 0;
+        while (sent < length) {
+            size_t chunk = (length - sent) > sizeof(buf) ? sizeof(buf) : (length - sent);
+            if (esp_partition_read(core_part, part_offset + sent, buf, chunk) != ESP_OK) {
+                grbl_send(CLIENT_SERIAL, "[MSG:Core dump read failed]\r\n");
+                break;
+            }
+            _webserver->client().write(buf, chunk);
+            sent += chunk;
+            vTaskDelay(1 / portTICK_RATE_MS);
         }
     }
 
