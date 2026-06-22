@@ -1100,10 +1100,8 @@ void mks_print_data_updata(void) {
 
     sync_print_state_ui();
 
-    if (SD_ready_next == false) {
-        if (mks_grbl.is_mks_ts35_flag == true) {
-            mks_print_bar_updata();
-        }
+    if (get_sd_state(false) == SDState::BusyPrinting) {
+        mks_print_bar_updata();
     }
 }
 

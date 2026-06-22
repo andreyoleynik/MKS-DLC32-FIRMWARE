@@ -65,14 +65,14 @@ namespace WebUI {
     const char PAGE_404[] =
         "<HTML>\n<HEAD>\n<title>Redirecting...</title> \n</HEAD>\n<BODY>\n<CENTER>Unknown page : $QUERY$- you will be "
         "redirected...\n<BR><BR>\nif not redirected, <a href='http://$WEB_ADDRESS$'>click here</a>\n<BR><BR>\n<PROGRESS name='prg' "
-        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=5; \nvar "
-        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>5) "
+        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=10; \nvar "
+        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>10) "
         "\n{\nclearInterval(interval);\nwindow.location.href='/';\n}\n},1000);\n</script>\n</CENTER>\n</BODY>\n</HTML>\n\n";
     const char PAGE_CAPTIVE[] =
         "<HTML>\n<HEAD>\n<title>Captive Portal</title> \n</HEAD>\n<BODY>\n<CENTER>Captive Portal page : $QUERY$- you will be "
         "redirected...\n<BR><BR>\nif not redirected, <a href='http://$WEB_ADDRESS$'>click here</a>\n<BR><BR>\n<PROGRESS name='prg' "
-        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=5; \nvar "
-        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>5) "
+        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=10; \nvar "
+        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>10) "
         "\n{\nclearInterval(interval);\nwindow.location.href='/';\n}\n},1000);\n</script>\n</CENTER>\n</BODY>\n</HTML>\n\n";
 
     // Error codes for upload
@@ -83,6 +83,42 @@ namespace WebUI {
     const int ESP_ERROR_NOT_ENOUGH_SPACE = 5;
     const int ESP_ERROR_UPLOAD_CANCELLED = 6;
     const int ESP_ERROR_FILE_CLOSE       = 7;
+
+    static const char* sd_state_text(SDState state) {
+        switch (state) {
+            case SDState::Idle: return "Idle";
+            case SDState::NotPresent: return "No SD card";
+            case SDState::Busy: return "Busy printing";
+            case SDState::BusyUploading: return "Busy uploading";
+            case SDState::BusyParsing: return "Busy parsing";
+            default: return "Unknown SD state";
+        }
+    }
+
+    static const char* upload_status_text(uint8_t status) {
+        switch (status) {
+            case UPLOAD_FILE_START: return "START";
+            case UPLOAD_FILE_WRITE: return "WRITE";
+            case UPLOAD_FILE_END: return "END";
+            case UPLOAD_FILE_ABORTED: return "ABORTED";
+            default: return "UNKNOWN";
+        }
+    }
+
+    static const char* sys_state_text(State state) {
+        switch (state) {
+            case State::Idle: return "Idle";
+            case State::Alarm: return "Alarm";
+            case State::CheckMode: return "CheckMode";
+            case State::Homing: return "Homing";
+            case State::Cycle: return "Cycle";
+            case State::Hold: return "Hold";
+            case State::Jog: return "Jog";
+            case State::SafetyDoor: return "SafetyDoor";
+            case State::Sleep: return "Sleep";
+            default: return "Unknown";
+        }
+    }
 
     Web_Server        web_server;
     bool              Web_Server::_setupdone     = false;
@@ -1443,11 +1479,33 @@ namespace WebUI {
                     if (filename[0] != '/') {
                         filename = "/" + upload.filename;
                     }
+                    // Recover stale SD print lock if a previous job was interrupted.
+                    SDState sdState = get_sd_state(true);
+                    if ((sdState == SDState::BusyPrinting) &&
+                        (sys.state != State::Cycle) &&
+                        (sys.state != State::Hold) &&
+                        (sys.state != State::Jog) &&
+                        (sys.state != State::Homing)) {
+                        closeFile();
+                        sdState = get_sd_state(true);
+                    }
+                    // Recover stale upload/listing lock if previous HTTP operation ended unexpectedly.
+                    if ((sdState == SDState::BusyUploading) || (sdState == SDState::BusyParsing)) {
+                        set_sd_state(SDState::Idle);
+                        SD.end();
+                        sdState = get_sd_state(true);
+                    }
                     //check if SD Card is available
-                    if (get_sd_state(true) != SDState::Idle) {
+                    if (sdState != SDState::Idle) {
                         _upload_status = UploadStatusType::FAILED;
-                        grbl_send(CLIENT_ALL, "[MSG:Upload cancelled]\r\n");
-                        pushError(ESP_ERROR_UPLOAD_CANCELLED, "Upload cancelled");
+                        String error_text = "Upload cancelled: status=START, file=";
+                        error_text += filename;
+                        error_text += ", sd_state=";
+                        error_text += sd_state_text(sdState);
+                        error_text += ", sys_state=";
+                        error_text += sys_state_text(sys.state);
+                        grbl_sendf(CLIENT_ALL, "[MSG:%s]\r\n", error_text.c_str());
+                        pushError(ESP_ERROR_UPLOAD_CANCELLED, error_text.c_str());
 
                     } else {
                         set_sd_state(SDState::BusyUploading);
@@ -1531,8 +1589,16 @@ namespace WebUI {
 
                 } else {  //Upload cancelled
                     _upload_status = UploadStatusType::FAILED;
+                    SDState current_state = get_sd_state(false);
+                    String  error_text    = "Upload cancelled: status=";
+                    error_text += upload_status_text(upload.status);
+                    error_text += ", file=";
+                    error_text += filename;
+                    error_text += ", sd_state=";
+                    error_text += sd_state_text(current_state);
+                    grbl_sendf(CLIENT_ALL, "%s\r\n", error_text.c_str());
+                    pushError(ESP_ERROR_UPLOAD_CANCELLED, error_text.c_str());
                     set_sd_state(SDState::Idle);
-                    grbl_send(CLIENT_ALL, "[MSG:Upload failed]\r\n");
                     if (sdUploadFile) {
                         sdUploadFile.close();
                     }

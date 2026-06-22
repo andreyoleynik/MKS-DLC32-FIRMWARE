@@ -29,6 +29,7 @@ uint8_t                    SD_client     = CLIENT_SERIAL;
 // uint8_t                    SD_client     = CLIENT_SD;
 WebUI::AuthenticationLevel SD_auth_level = WebUI::AuthenticationLevel::LEVEL_GUEST;
 uint32_t                   sd_current_line_number;     // stores the most recent line number read from the SD
+uint32_t                   sd_total_line_number;       // stores the total number of lines in the current file
 static char                comment[LINE_BUFFER_SIZE];  // Line to be executed. Zero-terminated.
 
 #define USE_HSPI_FOR_SD 1
@@ -197,6 +198,23 @@ boolean openFile(fs::FS& fs, const char* path) {
     if (!myFile) {
         return false;
     }
+    sd_total_line_number = 0;
+    bool     has_content  = false;
+    bool     last_was_nl   = true;
+    uint32_t total_lines   = 0;
+    while (myFile.available()) {
+        char c = myFile.read();
+        has_content = true;
+        last_was_nl  = (c == '\n');
+        if (c == '\n') {
+            total_lines++;
+        }
+    }
+    if (has_content && !last_was_nl) {
+        total_lines++;
+    }
+    sd_total_line_number = total_lines;
+    myFile.seek(0);
     set_sd_state(SDState::BusyPrinting);
     SD_ready_next          = false;  // this will get set to true when Grbl issues "ok" message
     sd_current_line_number = 0;
@@ -210,8 +228,8 @@ boolean closeFile() {
     set_sd_state(SDState::Idle);
     SD_ready_next          = false;
     sd_current_line_number = 0;
+    sd_total_line_number   = 0;
     myFile.close();
-    SD.end();
     return true;
 }
 
@@ -278,6 +296,9 @@ float sd_report_perc_complete() {
     if (!myFile) {
         return 0.0;
     }
+    if (sd_total_line_number > 0) {
+        return (float)sd_current_line_number / (float)sd_total_line_number * 100.0f;
+    }
     return (float)myFile.position() / (float)myFile.size() * 100.0f;
 }
 
@@ -293,30 +314,49 @@ void sd_set_current_line_number(uint32_t num) {
 SDState sd_state = SDState::Idle;
 
 SDState get_sd_state(bool refresh) {
-    if (SDCARD_DET_PIN != UNDEFINED_PIN) {
-        if (digitalRead(SDCARD_DET_PIN) != SDCARD_DET_VAL) {
-            sd_state = SDState::NotPresent;
-            return sd_state;
-            //no need to go further if SD detect is not correct
-        }
-    }
-
     //if busy doing something return state
     if (!((sd_state == SDState::NotPresent) || (sd_state == SDState::Idle))) {
         return sd_state;
     }
+
+    bool cd_present = true;
+    if (SDCARD_DET_PIN != UNDEFINED_PIN) {
+        // Debounce card-detect to avoid transient false "No SD card" on noisy CD lines.
+        static uint8_t cd_miss_count = 0;
+        const uint8_t  cd_miss_need  = 3;
+        if (digitalRead(SDCARD_DET_PIN) != SDCARD_DET_VAL) {
+            if (cd_miss_count < 255) {
+                cd_miss_count++;
+            }
+        } else {
+            cd_miss_count = 0;
+        }
+        cd_present = (cd_miss_count < cd_miss_need);
+    }
+
     if (!refresh) {
+        if (!cd_present) {
+            sd_state = SDState::NotPresent;
+        }
         return sd_state;  //to avoid refresh=true + busy to reset SD and waste time
+    }
+
+    // If already mounted and known idle, avoid unnecessary unmount/remount churn.
+    if ((sd_state == SDState::Idle) && (SD.cardSize() > 0)) {
+        return sd_state;
     }
 
     //SD is idle or not detected, let see if still the case
     SD.end();
     sd_state = SDState::NotPresent;
-    //using default value for speed ? should be parameter
-    //refresh content if card was removed
-    if (SD.begin((GRBL_SPI_SS == -1) ? SS : GRBL_SPI_SS, SD_SPI, GRBL_SPI_FREQ, "/sd", 2)) {
+    const int sd_ss_pin = (GRBL_SPI_SS == -1) ? SS : GRBL_SPI_SS;
+    SD_SPI.begin(GRBL_SPI_SCK, GRBL_SPI_MISO, GRBL_SPI_MOSI, sd_ss_pin);
+
+    if (SD.begin(sd_ss_pin, SD_SPI, GRBL_SPI_FREQ, "/sd", 2)) {
         if (SD.cardSize() > 0) {
             sd_state = SDState::Idle;
+        } else {
+            SD.end();
         }
     }
     return sd_state;

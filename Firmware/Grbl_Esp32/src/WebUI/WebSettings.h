@@ -36,6 +36,7 @@ namespace WebUI {
     extern IPaddrSetting* wifi_ap_ip;
 
     extern IntSetting* wifi_ap_channel;
+    extern EnumSetting* wifi_tx_power;
 
     extern StringSetting* wifi_hostname;
     extern EnumSetting*   http_enable;

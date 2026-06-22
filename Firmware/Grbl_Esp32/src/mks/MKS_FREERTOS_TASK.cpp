@@ -122,9 +122,7 @@ static void mks_page_data_updata(void) {
 
         if((count_updata == 200) || (count_updata > 200) ) { // 200*5=1000ms = 1s
 
-            if(SD_ready_next == false) {
-                mks_print_data_updata();
-            } 
+            mks_print_data_updata();
             count_updata = 0;
         }
     }

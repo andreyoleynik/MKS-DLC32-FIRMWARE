@@ -607,7 +607,40 @@ void print_esp_info(uint8_t client) {
     }
 
     grbl_sendf(client, "Reset reason num: %d\r\n", reason);
-    grbl_sendf(client, "Heap: %d\r\n", ESP.getFreeHeap());
+    grbl_sendf(client, "Heap free: %u\r\n", (unsigned)ESP.getFreeHeap());
+    grbl_sendf(client, "Heap min free: %u\r\n", (unsigned)xPortGetMinimumEverFreeHeapSize());
+}
+
+void print_last_reset_reason(uint8_t client) {
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char*        text   = "Unknown";
+    switch (reason) {
+        case ESP_RST_UNKNOWN:
+            text = "Unknown";
+            break;
+        case ESP_RST_POWERON:
+            text = "Power-on";
+            break;
+        case ESP_RST_EXT:
+            text = "External pin";
+            break;
+        case ESP_RST_SW:
+            text = "Software";
+            break;
+        case ESP_RST_WDT:
+            text = "Watchdog";
+            break;
+        case ESP_RST_DEEPSLEEP:
+            text = "Deep sleep";
+            break;
+        case ESP_RST_BROWNOUT:
+            text = "Brownout";
+            break;
+        case ESP_RST_SDIO:
+            text = "SDIO";
+            break;
+    }
+    grbl_sendf(client, "Last reset: %s (%d)\r\n", text, (int)reason);
 }
 
 Error system_execute_line(char* line, WebUI::ESPResponseStream* out, WebUI::AuthenticationLevel auth_level) {
@@ -628,6 +661,11 @@ Error system_execute_line(char* line, WebUI::ESPResponseStream* out, WebUI::Auth
     else if (strcmp("INFO", line + 1) == 0) 
     {
         print_esp_info(out->client());
+        return Error::Ok;
+    }
+    else if ((strcmp("LASTRESET", line + 1) == 0) || (strcmp("RESETREASON", line + 1) == 0)) 
+    {
+        print_last_reset_reason(out->client());
         return Error::Ok;
     }
     else if (*line++ == '[') {  // [ESPxxx] form

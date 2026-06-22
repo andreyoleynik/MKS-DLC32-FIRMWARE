@@ -19,6 +19,7 @@ lv_obj_t *label_tool_language;
 
 lv_obj_t* label_board_version;
 lv_obj_t* label_Firmware_version;
+lv_obj_t* label_build_version;
 lv_obj_t* label_cpu_info;
 lv_obj_t* tool_btn_beep;
 lv_obj_t* label_tool_beep;
@@ -134,6 +135,7 @@ static void event_btn_tool_sculpture_view(lv_obj_t* obj, lv_event_t event) {
 void mks_draw_tool(void) {
 
     char cpu_info[128]="CPU:Freq:";
+    char build_info[64];
     mks_global.mks_src_1 = lv_obj_create(mks_global.mks_src, NULL);
 	lv_obj_set_size(mks_global.mks_src_1, about_src1_x_size, about_src1_y_size);
     lv_obj_set_pos(mks_global.mks_src_1, about_src1_x, about_src1_y);
@@ -179,6 +181,9 @@ void mks_draw_tool(void) {
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_board_version, 10, 100, BOARD_NAME, 400);
 
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_Firmware_version, 10, 145, FW_NAME, 400);
+
+    snprintf(build_info, sizeof(build_info), "Build: %s %s", __DATE__, __TIME__);
+    mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_build_version, 10, 235, build_info, 400);
 
     strcat(cpu_info, String(ESP.getCpuFreqMHz()).c_str());
     strcat(cpu_info, "MHz/ T:");

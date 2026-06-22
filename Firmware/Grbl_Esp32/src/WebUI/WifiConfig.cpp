@@ -234,6 +234,16 @@ namespace WebUI {
         return 2 * (RSSI + 100);
     }
 
+    namespace {
+        void apply_tx_power_setting() {
+            wifi_power_t tx_power = WIFI_POWER_19_5dBm;
+            if (wifi_tx_power != nullptr) {
+                tx_power = static_cast<wifi_power_t>(wifi_tx_power->get());
+            }
+            WiFi.setTxPower(tx_power);
+        }
+    }
+
 
 #define WIFI_COUNT              40
 #define WIFI_DELAY_WAIT         500
@@ -330,6 +340,7 @@ namespace WebUI {
         }
         WiFi.enableAP(false);
         WiFi.mode(WIFI_STA);
+        apply_tx_power_setting();
         //Get parameters for STA
         String h = wifi_hostname->get();
         WiFi.setHostname(h.c_str());
@@ -376,6 +387,7 @@ namespace WebUI {
 
         WiFi.enableAP(false);
         WiFi.mode(WIFI_STA);
+    apply_tx_power_setting();
         //Get parameters for STA
         String h = wifi_hostname->get();
         WiFi.setHostname(h.c_str());
@@ -420,6 +432,7 @@ namespace WebUI {
         }
         WiFi.enableSTA(false);
         WiFi.mode(WIFI_AP);
+        apply_tx_power_setting();
         //Get parameters for AP
         //SSID
         String SSID = wifi_ap_ssid->get();

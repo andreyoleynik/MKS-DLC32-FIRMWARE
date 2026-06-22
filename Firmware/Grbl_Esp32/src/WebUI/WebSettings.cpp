@@ -55,6 +55,7 @@ namespace WebUI {
     IPaddrSetting* wifi_ap_ip;
 
     IntSetting* wifi_ap_channel;
+    EnumSetting* wifi_tx_power;
 
     StringSetting* wifi_hostname;
     EnumSetting*   http_enable;
@@ -71,6 +72,20 @@ namespace WebUI {
     enum_opt_t staModeOptions = {
         { "DHCP", DHCP_MODE },
         { "Static", STATIC_MODE },
+    };
+
+    enum_opt_t wifiTxPowerOptions = {
+        { "19.5 dBm", WIFI_POWER_19_5dBm },
+        { "19 dBm", WIFI_POWER_19dBm },
+        { "18.5 dBm", WIFI_POWER_18_5dBm },
+        { "17 dBm", WIFI_POWER_17dBm },
+        { "15 dBm", WIFI_POWER_15dBm },
+        { "13 dBm", WIFI_POWER_13dBm },
+        { "11 dBm", WIFI_POWER_11dBm },
+        { "8.5 dBm", WIFI_POWER_8_5dBm },
+        { "7 dBm", WIFI_POWER_7dBm },
+        { "5 dBm", WIFI_POWER_5dBm },
+        { "2 dBm", WIFI_POWER_2dBm },
     };
 #endif
 
@@ -756,7 +771,8 @@ namespace WebUI {
             webPrintln("Alarm");
             return Error::IdleError;
         }
-        if (sys.state != State::Idle) {
+        if (sys.state == State::Cycle || sys.state == State::Jog || sys.state == State::Homing ||
+            sys.state == State::CheckMode || (sys.state == State::Hold && !sys.suspend.bit.holdComplete)) {
             webPrintln("Busy");
             return Error::IdleError;
         }
@@ -791,6 +807,8 @@ namespace WebUI {
         }
 
         mc_reset();
+        // Ensure the SD stream is fully released so next run/upload can reopen the card.
+        closeFile();
         sys_rt_f_override = FeedOverride::Default;
         sys_rt_r_override = RapidOverride::Default;
         sys_rt_s_override = SpindleSpeedOverride::Default;
@@ -1242,6 +1260,14 @@ namespace WebUI {
                                           MIN_HOSTNAME_LENGTH,
                                           MAX_HOSTNAME_LENGTH,
                                           (bool (*)(char*))WiFiConfig::isHostnameValid);
+        wifi_tx_power = new EnumSetting("WiFi TX Power",
+                                        WEBSET,
+                                        WA,
+                                        "ESP113",
+                                        "System/TxPower",
+                                        DEFAULT_WIFI_TX_POWER,
+                                        &wifiTxPowerOptions,
+                                        NULL);
         wifi_ap_channel =
             new IntSetting("AP Channel", WEBSET, WA, "ESP108", "AP/Channel", DEFAULT_AP_CHANNEL, MIN_CHANNEL, MAX_CHANNEL, NULL);
         wifi_ap_ip = new IPaddrSetting("AP Static IP", WEBSET, WA, "ESP107", "AP/IP", DEFAULT_AP_IP, NULL);
