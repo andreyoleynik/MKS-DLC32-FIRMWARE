@@ -1,5 +1,6 @@
 #include "MKS_FREERTOS_TASK.h"
 #include "MKS_draw_print.h"
+#include "../Probe.h"
 
 #define DISP_TASK_STACK                 4096*2
 #define DISP_TASK_PRO                   2
@@ -16,6 +17,31 @@ TaskHandle_t frame_task_tcb = NULL;
 
 static void mks_page_data_updata(void);
 
+static lv_obj_t* probe_touch_indicator = NULL;
+static lv_style_t probe_touch_indicator_style;
+
+static void mks_probe_indicator_init(void) {
+    lv_style_copy(&probe_touch_indicator_style, &lv_style_plain);
+    probe_touch_indicator_style.body.main_color = LV_COLOR_MAKE(0x00, 0xFF, 0x00);
+    probe_touch_indicator_style.body.grad_color = LV_COLOR_MAKE(0x00, 0xFF, 0x00);
+    probe_touch_indicator_style.body.radius = 5;
+    probe_touch_indicator_style.body.border.width = 0;
+
+    probe_touch_indicator = lv_obj_create(lv_layer_top(), NULL);
+    lv_obj_set_size(probe_touch_indicator, 10, 10);
+    lv_obj_set_style(probe_touch_indicator, &probe_touch_indicator_style);
+    lv_obj_align(probe_touch_indicator, NULL, LV_ALIGN_IN_TOP_RIGHT, -5, 5);
+    lv_obj_set_click(probe_touch_indicator, false);
+    lv_obj_set_hidden(probe_touch_indicator, true);
+}
+
+static void mks_probe_indicator_update(void) {
+    if (probe_touch_indicator == NULL) {
+        return;
+    }
+    lv_obj_set_hidden(probe_touch_indicator, !probe_get_state());
+}
+
 IRAM_ATTR void lvgl_disp_task(void *parg) { 
 
 #if defined(USE_DelayUntil)
@@ -29,6 +55,7 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
     mks_lvgl_init();
 
     mks_global_style_init();
+    mks_probe_indicator_init();
 
     mks_draw_logo();
 
@@ -41,6 +68,7 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
 
         if(logo_flag == true) {
             lv_task_handler();
+            mks_probe_indicator_update();
             logo_flag_count++;
 
             if(logo_flag_count == 100) {
@@ -64,6 +92,7 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
         }else {
             lv_task_handler();
             mks_page_data_updata();
+            mks_probe_indicator_update();
             ts35_beep_handler();
         }
 
