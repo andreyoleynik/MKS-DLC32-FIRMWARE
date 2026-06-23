@@ -107,6 +107,16 @@ namespace WebUI {
     {
         bool client_found = false;
 
+        // Drop stale sockets first so new clients do not get rejected while
+        // slots look occupied but are already disconnected.
+        for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
+        {
+            if (!telnet_server[i].is_connected() && telnet_server[i]._telnetClient)
+            {
+                telnet_server[i]._telnetClient.stop();
+            }
+        }
+
         if (_telnetserver != NULL && _telnetserver->hasClient())
         {
             for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
@@ -127,8 +137,10 @@ namespace WebUI {
 
             if(!client_found)
             {
-                _telnetserver->available().stop();
-                grbl_send(CLIENT_ALL, "[MSG:TELNET Clinet rejected");
+                // Prefer replacing the oldest slot over rejecting new clients.
+                auto client = _telnetserver->available();
+                telnet_server[0].setup_client(client);
+                grbl_send(CLIENT_ALL, "[MSG:TELNET Client replaced oldest slot]\r\n");
             }
         }
         
@@ -234,8 +246,36 @@ namespace WebUI {
         //push UART data to all connected telnet clients
         if (is_connected())
         {
-            //log_d("[TELNET out connected]");
-            wsize = _telnetClient.write(buffer, size);
+            // Try to deliver all bytes, but keep a strict upper bound so
+            // network stalls can't freeze control loops.
+            const uint32_t start = millis();
+            while (wsize < size) {
+                int writable = _telnetClient.availableForWrite();
+                if (writable <= 0) {
+                    if ((millis() - start) > 200) {
+                        break;
+                    }
+                    COMMANDS::wait(0);
+                    vTaskDelay(1 / portTICK_RATE_MS);
+                    continue;
+                }
+
+                size_t chunk = (size - wsize);
+                if (chunk > (size_t)writable) {
+                    chunk = (size_t)writable;
+                }
+
+                size_t n = _telnetClient.write(buffer + wsize, chunk);
+                if (n == 0) {
+                    if ((millis() - start) > 200) {
+                        break;
+                    }
+                    COMMANDS::wait(0);
+                    vTaskDelay(1 / portTICK_RATE_MS);
+                    continue;
+                }
+                wsize += n;
+            }
             COMMANDS::wait(0);
         }
 

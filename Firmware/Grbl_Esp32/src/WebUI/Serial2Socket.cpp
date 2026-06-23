@@ -30,6 +30,8 @@
 namespace WebUI {
     Serial_2_Socket Serial2Socket;
 
+    static constexpr TickType_t S2S_MUTEX_TIMEOUT_TICKS = pdMS_TO_TICKS(20);
+
     // TX-путь зовётся из нескольких задач (protocol loop через grbl_send,
     // clientCheckTask из realtime-`?`), broadcastBIN не реентерабелен, а сам
     // WebSocketsServer удаляется при выключении/рестарте Wi-Fi. Поэтому буфер,
@@ -62,7 +64,9 @@ namespace WebUI {
 
     bool Serial_2_Socket::attachWS(WebSocketsServer* web_socket) {
         if (web_socket) {
-            xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
+            if (xSemaphoreTake(s2s_tx_mux, S2S_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+                return false;
+            }
             _web_socket   = web_socket;
             _TXbufferSize = 0;
             xSemaphoreGive(s2s_tx_mux);
@@ -72,7 +76,9 @@ namespace WebUI {
     }
 
     bool Serial_2_Socket::detachWS() {
-        xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
+        if (xSemaphoreTake(s2s_tx_mux, S2S_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+            return false;
+        }
         _web_socket   = NULL;
         _TXbufferSize = 0;
         xSemaphoreGive(s2s_tx_mux);
@@ -92,7 +98,10 @@ namespace WebUI {
         }
 
 #    if defined(ENABLE_SERIAL2SOCKET_OUT)
-        xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
+        if (xSemaphoreTake(s2s_tx_mux, S2S_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+            // Never block control loops forever because of WebUI transport.
+            return size;
+        }
         // Проверка указателя — под локом: detachWS() обнуляет его до того,
         // как Web_Server::end() удалит сервер (иначе use-after-free).
         if (!_web_socket) {
@@ -105,7 +114,15 @@ namespace WebUI {
         }
         for (size_t i = 0; i < size; i++) {
             if (_TXbufferSize >= TXBUFFERSIZE) {
-                flush_locked();
+                xSemaphoreGive(s2s_tx_mux);
+                flush();
+                if (xSemaphoreTake(s2s_tx_mux, S2S_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+                    return size;
+                }
+                if (!_web_socket) {
+                    xSemaphoreGive(s2s_tx_mux);
+                    return size;
+                }
             }
             _TXbuffer[_TXbufferSize++] = buffer[i];
         }
@@ -173,7 +190,9 @@ namespace WebUI {
     }
 
     void Serial_2_Socket::flush(void) {
-        xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
+        if (xSemaphoreTake(s2s_tx_mux, S2S_MUTEX_TIMEOUT_TICKS) != pdTRUE) {
+            return;
+        }
         flush_locked();
         xSemaphoreGive(s2s_tx_mux);
     }

@@ -82,6 +82,7 @@ namespace WebUI {
                 _telnetClient.stop();
             
             _telnetClient = client;
+            _telnetClient.setNoDelay(true);
         }
 
     public:

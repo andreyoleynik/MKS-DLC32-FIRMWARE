@@ -124,7 +124,14 @@ void protocol_main_loop() {
     // Perform some machine checks to make sure everything is good to go.
 #ifdef CHECK_LIMITS_AT_INIT
     if (hard_limits->get()) {
-        if (limits_get_state()) {
+        uint8_t limit_hits = 0;
+        for (uint8_t sample = 0; sample < 5; ++sample) {
+            if (limits_get_state()) {
+                ++limit_hits;
+            }
+            delay_ms(20);
+        }
+        if (limit_hits >= 3) {
             sys.state = State::Alarm;  // Ensure alarm state is active.
             report_feedback_message(Message::CheckLimits);
         }
