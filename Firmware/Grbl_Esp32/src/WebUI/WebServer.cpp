@@ -40,6 +40,11 @@
 #    include <StreamString.h>
 #    include <Update.h>
 #    include <esp_wifi_types.h>
+<<<<<<< Updated upstream
+=======
+#    include <esp_partition.h>
+#    include <esp_core_dump.h>
+>>>>>>> Stashed changes
 #    ifdef ENABLE_MDNS
 #        include <ESPmDNS.h>
 #    endif
@@ -49,11 +54,40 @@
 #    ifdef ENABLE_CAPTIVE_PORTAL
 #        include <DNSServer.h>
 
+#        if (defined(CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH) && defined(CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF) && \
+             CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF) ||                      \
+            (defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH) && defined(CONFIG_ESP32_COREDUMP_DATA_FORMAT_ELF) && \
+             CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH && CONFIG_ESP32_COREDUMP_DATA_FORMAT_ELF)
+#            define COREDUMP_FLASH_ELF_ENABLED 1
+#        else
+#            define COREDUMP_FLASH_ELF_ENABLED 0
+#        endif
+
 namespace WebUI {
+<<<<<<< Updated upstream
+=======
+#    if COREDUMP_FLASH_ELF_ENABLED
+    static constexpr bool CORE_DUMP_API_AVAILABLE = true;
+#    else
+    static constexpr bool CORE_DUMP_API_AVAILABLE = false;
+#    endif
+
+>>>>>>> Stashed changes
     const byte DNS_PORT = 53;
     DNSServer  dnsServer;
 }
 
+#    endif
+
+#    ifndef COREDUMP_FLASH_ELF_ENABLED
+#        if (defined(CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH) && defined(CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF) && \
+             CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF) ||                      \
+            (defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH) && defined(CONFIG_ESP32_COREDUMP_DATA_FORMAT_ELF) && \
+             CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH && CONFIG_ESP32_COREDUMP_DATA_FORMAT_ELF)
+#            define COREDUMP_FLASH_ELF_ENABLED 1
+#        else
+#            define COREDUMP_FLASH_ELF_ENABLED 0
+#        endif
 #    endif
 #    include <esp_ota_ops.h>
 
@@ -121,6 +155,11 @@ namespace WebUI {
         _socket_server = new WebSocketsServer(_port + 1);
         _socket_server->begin();
         _socket_server->onEvent(handle_Websocket_Event);
+    #ifdef WEBSOCKET_HAS_HEARTBEAT
+        // Drop stale clients quickly to avoid exhausting websocket slots and
+        // forcing users to reconnect multiple times.
+        _socket_server->enableHeartbeat(5000, 1500, 1);
+    #endif
 
         //Websocket output
         Serial2Socket.attachWS(_socket_server);
@@ -309,7 +348,7 @@ namespace WebUI {
                         if ((v == -1) || (v == 0)) {
                             done = true;
                         } else {
-                            _webserver->client().write(buf, 1024);
+                            _webserver->client().write(buf, v);
                             i += v;
                         }
 
@@ -467,7 +506,12 @@ namespace WebUI {
         int ESPpos = cmd.indexOf("[ESP");
         if (ESPpos > -1) {
             char line[256];
+<<<<<<< Updated upstream
             strncpy(line, cmd.c_str(), 255);
+=======
+            strncpy(line, espCmd.c_str(), 255);
+            line[255] = '\0';
+>>>>>>> Stashed changes
             ESPResponseStream* espresponse = silent ? NULL : new ESPResponseStream(_webserver);
             Error              err         = system_execute_line(line, espresponse, auth_level);
             String             answer;
@@ -523,6 +567,127 @@ namespace WebUI {
         }
     }
 
+<<<<<<< Updated upstream
+=======
+    void Web_Server::handle_coredump_info() {
+        if (is_authenticated() == AuthenticationLevel::LEVEL_GUEST) {
+            _webserver->send(401, "application/json", "{\"status\":\"error\",\"message\":\"Authentication failed\"}");
+            return;
+        }
+
+        size_t    image_addr = 0;
+        size_t    image_size = 0;
+        esp_err_t err        = ESP_ERR_NOT_SUPPORTED;
+        bool      api_available = false;
+        if (CORE_DUMP_API_AVAILABLE) {
+            api_available = true;
+            err = esp_core_dump_image_get(&image_addr, &image_size);
+        }
+        bool      has_image  = (err == ESP_OK) && (image_size > 0);
+
+        const esp_partition_t* core_part =
+            esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+
+        String json = "{";
+        json += "\"status\":\"ok\",";
+        json += "\"coreDumpApiAvailable\":";
+        json += api_available ? "true" : "false";
+        json += ",";
+        json += "\"configuredToFlash\":";
+    #if COREDUMP_FLASH_ELF_ENABLED
+        json += "true";
+    #else
+        json += "false";
+    #endif
+        json += ",\"partitionPresent\":";
+        json += core_part ? "true" : "false";
+        json += ",\"imageAvailable\":";
+        json += has_image ? "true" : "false";
+        json += ",\"espErr\":";
+        json += String((int)err);
+        json += ",\"address\":";
+        json += String((unsigned)image_addr);
+        json += ",\"size\":";
+        json += String((unsigned)image_size);
+        if (core_part) {
+            json += ",\"partitionAddress\":";
+            json += String((unsigned)core_part->address);
+            json += ",\"partitionSize\":";
+            json += String((unsigned)core_part->size);
+        }
+        json += "}";
+
+        _webserver->send(200, "application/json", json);
+    }
+
+    void Web_Server::handle_coredump_download() {
+        if (is_authenticated() == AuthenticationLevel::LEVEL_GUEST) {
+            _webserver->send(401, "text/plain", "Authentication failed");
+            return;
+        }
+
+        size_t    image_addr = 0;
+        size_t    image_size = 0;
+        if (!CORE_DUMP_API_AVAILABLE) {
+            _webserver->send(501, "text/plain", "Core dump is disabled in this firmware build");
+            return;
+        }
+        esp_err_t err        = esp_core_dump_image_get(&image_addr, &image_size);
+        if ((err != ESP_OK) || (image_size == 0)) {
+            _webserver->send(404, "text/plain", "No core dump image in flash");
+            return;
+        }
+
+        const esp_partition_t* core_part =
+            esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+        if (!core_part) {
+            _webserver->send(500, "text/plain", "coredump partition not found");
+            return;
+        }
+
+        if ((image_addr < core_part->address) || ((image_addr + image_size) > (core_part->address + core_part->size))) {
+            _webserver->send(500, "text/plain", "core dump image outside coredump partition");
+            return;
+        }
+
+        size_t offset = 0;
+        if (_webserver->hasArg("offset")) {
+            offset = strtoul(_webserver->arg("offset").c_str(), NULL, 10);
+        }
+        if (offset >= image_size) {
+            _webserver->send(416, "text/plain", "offset out of range");
+            return;
+        }
+
+        size_t length = image_size - offset;
+        if (_webserver->hasArg("length")) {
+            size_t requested = strtoul(_webserver->arg("length").c_str(), NULL, 10);
+            if ((requested > 0) && (requested < length)) {
+                length = requested;
+            }
+        }
+
+        size_t part_offset = (image_addr - core_part->address) + offset;
+
+        _webserver->sendHeader("Content-Disposition", "attachment; filename=\"coredump.bin\"");
+        _webserver->setContentLength(length);
+        _webserver->send(200, "application/octet-stream", "");
+
+        uint8_t buf[1024];
+        size_t  sent = 0;
+        while (sent < length) {
+            size_t chunk = (length - sent) > sizeof(buf) ? sizeof(buf) : (length - sent);
+            if (esp_partition_read(core_part, part_offset + sent, buf, chunk) != ESP_OK) {
+                grbl_send(CLIENT_SERIAL, "[MSG:Core dump read failed]\r\n");
+                break;
+            }
+            _webserver->client().write(buf, chunk);
+            sent += chunk;
+            vTaskDelay(1 / portTICK_RATE_MS);
+        }
+    }
+
+>>>>>>> Stashed changes
     //login status check
     void Web_Server::handle_login() {
 #    ifdef ENABLE_AUTHENTICATION
@@ -885,7 +1050,8 @@ namespace WebUI {
         jsonfile += "\"total\":\"" + ESPResponseStream::formatBytes(totalBytes) + "\",";
         jsonfile += "\"used\":\"" + ESPResponseStream::formatBytes(usedBytes) + "\",";
         jsonfile.concat(F("\"occupation\":\""));
-        jsonfile += String(100 * usedBytes / totalBytes);
+        size_t occupation = (totalBytes > 0) ? ((100 * usedBytes) / totalBytes) : 0;
+        jsonfile += String(occupation);
         jsonfile += "\"";
         jsonfile += "}";
         path = "";
@@ -903,10 +1069,13 @@ namespace WebUI {
                 _webserver->send(web_error, "text/xml", st);
             }
 
+            // Bound wait time to keep control loops responsive on network hiccups.
+            const uint16_t bounded_timeout = (timeout > 150) ? 150 : timeout;
             uint32_t t = millis();
-            while (millis() - t < timeout) {
+            while (millis() - t < bounded_timeout) {
                 _socket_server->loop();
-                delay(10);
+                COMMANDS::wait(0);
+                vTaskDelay(1 / portTICK_RATE_MS);
             }
         }
     }
@@ -1563,7 +1732,7 @@ namespace WebUI {
         if (_socket_server && _setupdone) {
             _socket_server->loop();
         }
-        if ((millis() - timeout) > 10000 && _socket_server) {
+        if ((millis() - timeout) > 10000 && _socket_server && (_socket_server->connectedClients(false) > 0)) {
             String s = "PING:";
             s += String(_id_connection);
             _socket_server->broadcastTXT(s);
@@ -1575,6 +1744,9 @@ namespace WebUI {
         switch (type) {
             case WStype_DISCONNECTED:
                 //USE_SERIAL.printf("[%u] Disconnected!\n", num);
+                if (_id_connection == num) {
+                    _id_connection = -1;
+                }
                 grbl_send(CLIENT_SERIAL , "WebUI Disconnected!\n");
                 break;
             case WStype_CONNECTED: {

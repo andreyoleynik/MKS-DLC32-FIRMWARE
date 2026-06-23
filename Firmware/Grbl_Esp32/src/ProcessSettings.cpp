@@ -1,6 +1,22 @@
 #include "Grbl.h"
 #include <map>
 #include "Regex.h"
+<<<<<<< Updated upstream
+=======
+#include <esp_partition.h>
+#include <esp_core_dump.h>
+#include <cstdlib>
+
+#if (defined(CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH) && defined(CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF) && \
+    CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF) ||                           \
+    (defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH) && defined(CONFIG_ESP32_COREDUMP_DATA_FORMAT_ELF) &&      \
+    CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH && CONFIG_ESP32_COREDUMP_DATA_FORMAT_ELF)
+#define COREDUMP_FLASH_ELF_ENABLED 1
+#else
+#define COREDUMP_FLASH_ELF_ENABLED 0
+#endif
+#include "mks/MKS_draw_move.h"
+>>>>>>> Stashed changes
 
 #ifdef ENABLE_TELNET
     #include "WebUI/TelnetServer.h"
@@ -607,7 +623,104 @@ void print_esp_info(uint8_t client) {
     }
 
     grbl_sendf(client, "Reset reason num: %d\r\n", reason);
+<<<<<<< Updated upstream
     grbl_sendf(client, "Heap: %d\r\n", ESP.getFreeHeap());
+=======
+    grbl_sendf(client, "Heap free: %u\r\n", (unsigned)ESP.getFreeHeap());
+    grbl_sendf(client, "Heap min free: %u\r\n", (unsigned)xPortGetMinimumEverFreeHeapSize());
+}
+
+void print_last_reset_reason(uint8_t client) {
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char*        text   = "Unknown";
+    switch (reason) {
+        case ESP_RST_UNKNOWN:
+            text = "Unknown";
+            break;
+        case ESP_RST_POWERON:
+            text = "Power-on";
+            break;
+        case ESP_RST_EXT:
+            text = "External pin";
+            break;
+        case ESP_RST_SW:
+            text = "Software";
+            break;
+        case ESP_RST_WDT:
+            text = "Watchdog";
+            break;
+        case ESP_RST_DEEPSLEEP:
+            text = "Deep sleep";
+            break;
+        case ESP_RST_BROWNOUT:
+            text = "Brownout";
+            break;
+        case ESP_RST_SDIO:
+            text = "SDIO";
+            break;
+#ifdef ESP_RST_PANIC
+        case ESP_RST_PANIC:
+            text = "Panic/Crash";
+            break;
+#endif
+#ifdef ESP_RST_INT_WDT
+        case ESP_RST_INT_WDT:
+            text = "Interrupt watchdog";
+            break;
+#endif
+#ifdef ESP_RST_TASK_WDT
+        case ESP_RST_TASK_WDT:
+            text = "Task watchdog";
+            break;
+#endif
+    }
+    grbl_sendf(client, "Last reset: %s (%d)\r\n", text, (int)reason);
+}
+
+static void print_coredump_status(uint8_t client) {
+    size_t    addr = 0;
+    size_t    size = 0;
+    esp_err_t err  = ESP_ERR_NOT_SUPPORTED;
+    bool      api_available = false;
+#if COREDUMP_FLASH_ELF_ENABLED
+    api_available = true;
+    err           = esp_core_dump_image_get(&addr, &size);
+#endif
+    const esp_partition_t* core_part =
+        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+
+    if (api_available) {
+    grbl_sendf(client, "CoreDump configured: FLASH\r\n");
+    } else {
+    grbl_sendf(client, "CoreDump configured: disabled/unknown in this build\r\n");
+    }
+    grbl_sendf(client, "CoreDump API available: %s\r\n", api_available ? "yes" : "no");
+
+    if (core_part) {
+        grbl_sendf(client, "CoreDump partition: 0x%08x size 0x%08x\r\n", (unsigned)core_part->address, (unsigned)core_part->size);
+    } else {
+        grbl_sendf(client, "CoreDump partition: not found\r\n");
+    }
+
+    if ((err == ESP_OK) && (size > 0)) {
+        grbl_sendf(client, "CoreDump image: present addr=0x%08x size=%u\r\n", (unsigned)addr, (unsigned)size);
+        grbl_sendf(client, "HTTP fetch: /coredump/info and /coredump.bin\r\n");
+    } else {
+        grbl_sendf(client, "CoreDump image: not present (err=%d)\r\n", (int)err);
+    }
+>>>>>>> Stashed changes
+}
+
+static void print_machine_state(uint8_t client) {
+    AxisMask limit_state = limits_get_state();
+    grbl_sendf(client,
+               "State: %d, Alarm: %d, Limits: 0x%02x, HardLimits: %d, HomingEnable: %d, StepperIdle: %d\r\n",
+               (int)sys.state,
+               (int)sys_rt_exec_alarm,
+               (unsigned)limit_state,
+               hard_limits->get() ? 1 : 0,
+               homing_enable->get() ? 1 : 0,
+               mks_get_motor_status() ? 1 : 0);
 }
 
 Error system_execute_line(char* line, WebUI::ESPResponseStream* out, WebUI::AuthenticationLevel auth_level) {
@@ -615,6 +728,12 @@ Error system_execute_line(char* line, WebUI::ESPResponseStream* out, WebUI::Auth
 
     char* value;
 
+    if (strcmp("CRASH", line + 1) == 0 || strcmp("PANIC", line + 1) == 0) 
+    {
+        grbl_sendf(out->client(), "Forcing crash for coredump test\r\n");
+        abort();
+        return Error::Ok;
+    }
     if (strcmp("PING", line + 1) == 0) 
     {
         grbl_sendf(out->client(), "ping ok\r\n");
@@ -630,6 +749,24 @@ Error system_execute_line(char* line, WebUI::ESPResponseStream* out, WebUI::Auth
         print_esp_info(out->client());
         return Error::Ok;
     }
+<<<<<<< Updated upstream
+=======
+    else if ((strcmp("LASTRESET", line + 1) == 0) || (strcmp("RESETREASON", line + 1) == 0)) 
+    {
+        print_last_reset_reason(out->client());
+        return Error::Ok;
+    }
+    else if ((strcmp("STATE", line + 1) == 0) || (strcmp("MACHINESTATE", line + 1) == 0))
+    {
+        print_machine_state(out->client());
+        return Error::Ok;
+    }
+    else if ((strcmp("COREDUMP", line + 1) == 0) || (strcmp("COREDUMPINFO", line + 1) == 0))
+    {
+        print_coredump_status(out->client());
+        return Error::Ok;
+    }
+>>>>>>> Stashed changes
     else if (*line++ == '[') {  // [ESPxxx] form
         value = strrchr(line, ']');
         if (!value) {

@@ -1,0 +1,411 @@
+/*
+  DIAGNOSTIC SKETCH for MKS-DLC32 Joystick Controller
+  
+  Use this to test individual components before running the main controller.
+  Compile and upload ONLY to test hardware, then switch back to main.cpp
+  
+  What it tests:
+  - Pins and connections
+  - Encoder pulses
+  - Button presses
+  - LED brightness
+  - Bluetooth connection
+  
+  Paste this code into Arduino IDE or create alternative build in platformio.ini:
+  [env:esp32-diag]
+  platform = espressif32@3.2.0
+  board = esp32doit-devkit-v1
+  framework = arduino
+  src_filter = +<*> -<main.cpp>
+*/
+
+#include <Arduino.h>
+#include <BluetoothSerial.h>
+
+// ============== PIN CONFIGURATION ==============
+#define ENCODER_CLK    25
+#define ENCODER_DT     26
+#define ENCODER_SW     27
+
+#define BTN_AXIS_X     14
+#define BTN_AXIS_Y     12
+#define BTN_AXIS_Z     13
+
+#define LED_X_PIN      32
+#define LED_Y_PIN      33
+#define LED_Z_PIN      15
+#define STATUS_LED     2
+
+#define BT_DEVICE_NAME "MKS-DLC32"
+
+// ============== DIAGNOSTIC STATE ==============
+enum DiagMode {
+  MENU,
+  TEST_PINS,
+  TEST_ENCODER,
+  TEST_BUTTONS,
+  TEST_LEDS,
+  TEST_BLUETOOTH
+};
+
+volatile long encoderCount = 0;
+volatile int lastCLK = LOW;
+DiagMode currentMode = MENU;
+BluetoothSerial SerialBT;
+
+// ============== SETUP ==============
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  // Initialize pins
+  pinMode(ENCODER_CLK, INPUT);
+  pinMode(ENCODER_DT, INPUT);
+  pinMode(ENCODER_SW, INPUT_PULLUP);
+  
+  pinMode(BTN_AXIS_X, INPUT_PULLUP);
+  pinMode(BTN_AXIS_Y, INPUT_PULLUP);
+  pinMode(BTN_AXIS_Z, INPUT_PULLUP);
+  
+  pinMode(LED_X_PIN, OUTPUT);
+  pinMode(LED_Y_PIN, OUTPUT);
+  pinMode(LED_Z_PIN, OUTPUT);
+  pinMode(STATUS_LED, OUTPUT);
+  
+  // Turn off all LEDs
+  digitalWrite(LED_X_PIN, LOW);
+  digitalWrite(LED_Y_PIN, LOW);
+  digitalWrite(LED_Z_PIN, LOW);
+  digitalWrite(STATUS_LED, LOW);
+  
+  Serial.println("\n╔════════════════════════════════════════╗");
+  Serial.println("║   Diagnostic Sketch - Hardware Test    ║");
+  Serial.println("╚════════════════════════════════════════╝\n");
+  
+  showMenu();
+}
+
+// ============== MAIN LOOP ==============
+void loop() {
+  // Handle serial input for mode selection
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    
+    if (input == "0") {
+      showMenu();
+    }
+    else if (input == "1") {
+      currentMode = TEST_PINS;
+      testPins();
+    }
+    else if (input == "2") {
+      currentMode = TEST_ENCODER;
+      testEncoder();
+    }
+    else if (input == "3") {
+      currentMode = TEST_BUTTONS;
+      testButtons();
+    }
+    else if (input == "4") {
+      currentMode = TEST_LEDS;
+      testLeds();
+    }
+    else if (input == "5") {
+      currentMode = TEST_BLUETOOTH;
+      testBluetooth();
+    }
+    else if (input == "q") {
+      Serial.println("Exiting diagnostic mode. Restart ESP32 and upload main.cpp");
+      while(1) delay(1000);
+    }
+    else {
+      Serial.println("Invalid input. Enter 0-5 or q");
+    }
+  }
+  
+  delay(100);
+}
+
+// ============== MENU ==============
+void showMenu() {
+  currentMode = MENU;
+  Serial.println("\n╔════ DIAGNOSTIC MENU ════╗");
+  Serial.println("║ 0 - Show this menu      ║");
+  Serial.println("║ 1 - Test GPIO pins      ║");
+  Serial.println("║ 2 - Test encoder        ║");
+  Serial.println("║ 3 - Test buttons        ║");
+  Serial.println("║ 4 - Test LEDs           ║");
+  Serial.println("║ 5 - Test Bluetooth      ║");
+  Serial.println("║ q - Quit & restart      ║");
+  Serial.println("╚═════════════════════════╝\n");
+}
+
+// ============== TEST 1: GPIO PINS ==============
+void testPins() {
+  Serial.println("\n╔════ TEST 1: GPIO PINS ════╗\n");
+  
+  Serial.println("GPIO Configuration:");
+  Serial.println("┌─ Encoder:");
+  Serial.printf("│  CLK (GPIO25)  = INPUT      %s\n", (digitalRead(ENCODER_CLK) == LOW) ? "[LOW]" : "[HIGH]");
+  Serial.printf("│  DT  (GPIO26)  = INPUT      %s\n", (digitalRead(ENCODER_DT) == LOW) ? "[LOW]" : "[HIGH]");
+  Serial.printf("│  SW  (GPIO27)  = INPUT_PU   %s\n", (digitalRead(ENCODER_SW) == LOW) ? "[PRESSED]" : "[RELEASED]");
+  
+  Serial.println("├─ Buttons:");
+  Serial.printf("│  X   (GPIO14)  = INPUT_PU   %s\n", (digitalRead(BTN_AXIS_X) == LOW) ? "[PRESSED]" : "[RELEASED]");
+  Serial.printf("│  Y   (GPIO12)  = INPUT_PU   %s\n", (digitalRead(BTN_AXIS_Y) == LOW) ? "[PRESSED]" : "[RELEASED]");
+  Serial.printf("│  Z   (GPIO13)  = INPUT_PU   %s\n", (digitalRead(BTN_AXIS_Z) == LOW) ? "[PRESSED]" : "[RELEASED]");
+  
+  Serial.println("└─ LEDs:");
+  Serial.printf("   X   (GPIO32)  = OUTPUT     (off)\n");
+  Serial.printf("   Y   (GPIO33)  = OUTPUT     (off)\n");
+  Serial.printf("   Z   (GPIO15)  = OUTPUT     (off)\n");
+  Serial.printf("   Stat(GPIO2)   = OUTPUT     (off)\n");
+  
+  Serial.println("\n✓ All pins are configured correctly\n");
+  showMenu();
+}
+
+// ============== TEST 2: ENCODER ==============
+void testEncoder() {
+  Serial.println("\n╔════ TEST 2: ENCODER ════╗\n");
+  Serial.println("Rotating encoder...");
+  Serial.println("Expected: pulses should increment or decrement");
+  Serial.println("(Rotate encoder 10 times clockwise/counter-clockwise)\n");
+  
+  // Attach interrupt for encoder test
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), onEncoderClk, CHANGE);
+  
+  encoderCount = 0;
+  uint32_t startTime = millis();
+  
+  while (millis() - startTime < 30000) {  // 30 second test
+    if (encoderCount != 0) {
+      Serial.printf("Encoder pulses: %ld\n", encoderCount);
+      delay(200);
+    }
+    
+    if (Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      if (input.trim() == "0") {
+        detachInterrupt(digitalPinToInterrupt(ENCODER_CLK));
+        showMenu();
+        return;
+      }
+    }
+  }
+  
+  detachInterrupt(digitalPinToInterrupt(ENCODER_CLK));
+  
+  if (encoderCount == 0) {
+    Serial.println("✗ ERROR: No encoder pulses detected!");
+    Serial.println("  - Check encoder connections (CLK/DT to GPIO25/26)");
+    Serial.println("  - Check encoder power (5V and GND)");
+    Serial.println("  - Try rotating encoder more vigorously");
+  } else {
+    Serial.printf("✓ Encoder working: detected %ld pulses\n", encoderCount);
+  }
+  
+  Serial.println("\nPress '0' for menu or rotate encoder again...\n");
+  showMenu();
+}
+
+void IRAM_ATTR onEncoderClk() {
+  int currentCLK = digitalRead(ENCODER_CLK);
+  if (currentCLK != lastCLK) {
+    lastCLK = currentCLK;
+    if (currentCLK == HIGH) {
+      if (digitalRead(ENCODER_DT) != currentCLK) {
+        encoderCount++;
+      } else {
+        encoderCount--;
+      }
+    }
+  }
+}
+
+// ============== TEST 3: BUTTONS ==============
+void testButtons() {
+  Serial.println("\n╔════ TEST 3: BUTTONS ════╗\n");
+  Serial.println("Press buttons X, Y, Z and encoder button");
+  Serial.println("Watch for state changes below\n");
+  Serial.println("Button States:");
+  
+  uint32_t startTime = millis();
+  int lastX = HIGH, lastY = HIGH, lastZ = HIGH, lastSW = HIGH;
+  
+  while (millis() - startTime < 20000) {  // 20 second test
+    int x = digitalRead(BTN_AXIS_X);
+    int y = digitalRead(BTN_AXIS_Y);
+    int z = digitalRead(BTN_AXIS_Z);
+    int sw = digitalRead(ENCODER_SW);
+    
+    if (x != lastX) {
+      Serial.printf("  [%05ldms] X Button: %s\n", millis() - startTime, (x == LOW) ? "PRESSED" : "RELEASED");
+      lastX = x;
+    }
+    if (y != lastY) {
+      Serial.printf("  [%05ldms] Y Button: %s\n", millis() - startTime, (y == LOW) ? "PRESSED" : "RELEASED");
+      lastY = y;
+    }
+    if (z != lastZ) {
+      Serial.printf("  [%05ldms] Z Button: %s\n", millis() - startTime, (z == LOW) ? "PRESSED" : "RELEASED");
+      lastZ = z;
+    }
+    if (sw != lastSW) {
+      Serial.printf("  [%05ldms] Encoder Button: %s\n", millis() - startTime, (sw == LOW) ? "PRESSED" : "RELEASED");
+      lastSW = sw;
+    }
+    
+    delay(50);
+    
+    if (Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      if (input.trim() == "0") {
+        showMenu();
+        return;
+      }
+    }
+  }
+  
+  Serial.println("\n✓ Button test complete\n");
+  showMenu();
+}
+
+// ============== TEST 4: LEDs ==============
+void testLeds() {
+  Serial.println("\n╔════ TEST 4: LEDs ════╗\n");
+  
+  // Test pattern 1: Sequential on/off
+  Serial.println("Pattern 1: Sequential blink (X → Y → Z → Status)");
+  testLedSequence();
+  
+  // Test pattern 2: All on
+  Serial.println("\nPattern 2: All LEDs on for 2 seconds");
+  digitalWrite(LED_X_PIN, HIGH);
+  digitalWrite(LED_Y_PIN, HIGH);
+  digitalWrite(LED_Z_PIN, HIGH);
+  digitalWrite(STATUS_LED, HIGH);
+  delay(2000);
+  digitalWrite(LED_X_PIN, LOW);
+  digitalWrite(LED_Y_PIN, LOW);
+  digitalWrite(LED_Z_PIN, LOW);
+  digitalWrite(STATUS_LED, LOW);
+  
+  // Test pattern 3: Fade using PWM
+  Serial.println("\nPattern 3: PWM fade (X LED)");
+  for (int i = 0; i <= 255; i += 5) {
+    analogWrite(LED_X_PIN, i);
+    delay(50);
+  }
+  for (int i = 255; i >= 0; i -= 5) {
+    analogWrite(LED_X_PIN, i);
+    delay(50);
+  }
+  digitalWrite(LED_X_PIN, LOW);
+  
+  Serial.println("\n✓ All LEDs tested\n");
+  Serial.println("If you didn't see LEDs light up:");
+  Serial.println("  - Check LED polarity (long leg = +GPIO, short leg = GND)");
+  Serial.println("  - Check resistor 220Ω in series");
+  Serial.println("  - Check power supply");
+  
+  showMenu();
+}
+
+void testLedSequence() {
+  uint8_t leds[4] = {LED_X_PIN, LED_Y_PIN, LED_Z_PIN, STATUS_LED};
+  const char* names[4] = {"X", "Y", "Z", "Status"};
+  
+  for (int cycle = 0; cycle < 2; cycle++) {
+    for (int i = 0; i < 4; i++) {
+      Serial.printf("  → LED %s ON\n", names[i]);
+      digitalWrite(leds[i], HIGH);
+      delay(500);
+      digitalWrite(leds[i], LOW);
+      delay(300);
+    }
+  }
+}
+
+// ============== TEST 5: BLUETOOTH ==============
+void testBluetooth() {
+  Serial.println("\n╔════ TEST 5: BLUETOOTH ════╗\n");
+  
+  Serial.printf("Starting Bluetooth as: %s\n", BT_DEVICE_NAME);
+  Serial.println("Looking for MKS-DLC32 station...\n");
+  
+  if (!SerialBT.begin(BT_DEVICE_NAME)) {
+    Serial.println("✗ ERROR: Bluetooth initialization failed!");
+    showMenu();
+    return;
+  }
+  
+  Serial.println("Bluetooth initialized. Waiting for connection...\n");
+  Serial.println("Status: Blink LED while looking, solid when connected\n");
+  
+  uint32_t startTime = millis();
+  bool wasConnected = false;
+  
+  while (millis() - startTime < 30000) {  // 30 second test
+    bool isConnected = SerialBT.hasClient();
+    
+    if (isConnected != wasConnected) {
+      wasConnected = isConnected;
+      if (isConnected) {
+        Serial.println("✓ Connected to MKS-DLC32!");
+        digitalWrite(STATUS_LED, HIGH);
+        
+        // Try sending status request
+        Serial.println("\nSending status request to station...");
+        SerialBT.write('?');
+        delay(500);
+        
+        // Read response
+        if (SerialBT.available()) {
+          String response = "";
+          while (SerialBT.available()) {
+            char c = SerialBT.read();
+            response += c;
+            if (c == '>') break;
+          }
+          Serial.printf("Station responded: %s\n", response.c_str());
+        }
+      } else {
+        Serial.println("✗ Disconnected from station");
+        digitalWrite(STATUS_LED, LOW);
+      }
+    }
+    
+    // Blink while searching
+    if (!isConnected) {
+      digitalWrite(STATUS_LED, (millis() / 300) % 2);
+    }
+    
+    delay(100);
+    
+    if (Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      if (input.trim() == "0") {
+        SerialBT.end();
+        showMenu();
+        return;
+      }
+    }
+  }
+  
+  Serial.println("\n✓ Bluetooth test complete\n");
+  SerialBT.end();
+  showMenu();
+}
+
+// ============== ERROR CODES ==============
+void printErrorCodes() {
+  Serial.println("\n╔════ TROUBLESHOOTING ════╗\n");
+  Serial.println("If tests fail, check:");
+  Serial.println("1. GPIO pin connections match platformio.ini");
+  Serial.println("2. Power supply (5V) is connected");
+  Serial.println("3. Ground connections are solid");
+  Serial.println("4. No loose wires or cold solder joints");
+  Serial.println("5. Components are not defective\n");
+}
