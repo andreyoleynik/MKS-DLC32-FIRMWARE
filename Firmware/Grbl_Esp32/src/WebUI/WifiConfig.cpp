@@ -585,16 +585,26 @@ namespace WebUI {
         // периодически пинаем reconnect сами. handle() работает в clientCheckTask —
         // пока StartSTA ведёт подключение из другой задачи (sta_connect_busy),
         // retry запрещён, иначе конкурентные вызовы esp_wifi вешают задачу.
-        static const uint32_t STA_RECONNECT_INTERVAL_MS = 15000;
         static uint32_t       sta_last_ok_or_retry      = 0;
+        static bool           sta_reconnect_warned      = false;
         if (WiFi.getMode() == WIFI_STA) {
             uint32_t now = millis();
-            if (sta_connect_busy || WiFi.status() == WL_CONNECTED) {
+            wl_status_t status = WiFi.status();
+            if (sta_connect_busy || status == WL_CONNECTED) {
                 sta_last_ok_or_retry = now;
-            } else if (now - sta_last_ok_or_retry > STA_RECONNECT_INTERVAL_MS) {
+                sta_reconnect_warned = false;
+            } else {
+                bool reconnect_needed = (status == WL_DISCONNECTED || status == WL_CONNECTION_LOST || status == WL_CONNECT_FAILED);
+                if (!reconnect_needed) {
+                    sta_last_ok_or_retry = now;
+                } else if (now - sta_last_ok_or_retry > WIFI_STA_RECONNECT_INTERVAL_MS) {
                 sta_last_ok_or_retry = now;
-                grbl_send(CLIENT_SERIAL, "[MSG:WiFi STA lost, reconnecting]\r\n");
+                if (!sta_reconnect_warned) {
+                    grbl_send(CLIENT_SERIAL, "[MSG:WiFi STA lost, reconnecting]\r\n");
+                    sta_reconnect_warned = true;
+                }
                 WiFi.reconnect();
+                }
             }
         }
         wifi_services.handle();

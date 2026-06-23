@@ -107,15 +107,19 @@ namespace WebUI {
     {
         bool client_found = false;
 
-        if (_telnetserver != NULL && _telnetserver->hasClient())
+        if (_telnetserver != NULL)
         {
+            // WiFiServer::available() is safer on ESP32 Arduino 2.x: it checks
+            // internal listening state before calling lwip_accept().
+            auto client = _telnetserver->available();
+
+            if (client)
+            {
             for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
             {
                 //find free/disconnected spot
                 if (!telnet_server[i].is_connected()) 
                 {
-                    auto client = _telnetserver->available();
-
                     telnet_server[i].setup_client(client);
 
                     String s = "[MSG:TELNET Connected i:" + String(i) + "]\r\n";
@@ -127,8 +131,9 @@ namespace WebUI {
 
             if(!client_found)
             {
-                _telnetserver->available().stop();
+                client.stop();
                 grbl_send(CLIENT_ALL, "[MSG:TELNET Clinet rejected");
+            }
             }
         }
         

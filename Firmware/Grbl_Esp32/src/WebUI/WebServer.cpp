@@ -41,6 +41,7 @@
 #    include <Update.h>
 #    include <esp_wifi_types.h>
 #    include <esp_partition.h>
+#    include <lwip/sockets.h>
 #    if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
 #        include <esp_core_dump.h>
 #    endif
@@ -302,14 +303,20 @@ namespace WebUI {
             if (SPIFFS.exists(pathWithGz)) {
                 path = pathWithGz;
             }
-
+            WiFiClient client = _webserver->client();
+            client.setNoDelay(true);
             File file = SPIFFS.open(path, FILE_READ);
+            if (!file) {
+                _webserver->send(500, "text/plain", "WebUI open failed");
+                return;
+            }
             _webserver->streamFile(file, contentType);
             file.close();
             return;
         }
 
         //if no lets launch the default content
+        grbl_send(CLIENT_ALL, "[MSG:WebUI files missing in SPIFFS]\r\n");
         _webserver->sendHeader("Content-Encoding", "gzip");
         _webserver->send_P(200, "text/html", PAGE_NOFILES, PAGE_NOFILES_SIZE);
     }
@@ -357,7 +364,7 @@ namespace WebUI {
                         if ((v == -1) || (v == 0)) {
                             done = true;
                         } else {
-                            _webserver->client().write(buf, 1024);
+                            _webserver->client().write(buf, v);
                             i += v;
                         }
 
@@ -384,7 +391,13 @@ namespace WebUI {
             if (SPIFFS.exists(pathWithGz)) {
                 path = pathWithGz;
             }
+            WiFiClient client = _webserver->client();
+            client.setNoDelay(true);
             File file = SPIFFS.open(path, FILE_READ);
+            if (!file) {
+                _webserver->send(404, "text/plain", "Not found");
+                return;
+            }
             _webserver->streamFile(file, contentType);
             file.close();
             return;
@@ -420,7 +433,13 @@ namespace WebUI {
                 if (SPIFFS.exists(pathWithGz)) {
                     path = pathWithGz;
                 }
+                WiFiClient client = _webserver->client();
+                client.setNoDelay(true);
                 File file = SPIFFS.open(path, FILE_READ);
+                if (!file) {
+                    _webserver->send(404, "text/plain", "Not found");
+                    return;
+                }
                 _webserver->streamFile(file, contentType);
                 file.close();
 
@@ -1770,7 +1789,7 @@ namespace WebUI {
         if (_socket_server && _setupdone) {
             _socket_server->loop();
         }
-        if ((millis() - timeout) > 10000 && _socket_server) {
+        if ((millis() - timeout) > 10000 && _socket_server && (_socket_server->connectedClients(false) > 0)) {
             String s = "PING:";
             s += String(_id_connection);
             _socket_server->broadcastTXT(s);
@@ -1782,6 +1801,9 @@ namespace WebUI {
         switch (type) {
             case WStype_DISCONNECTED:
                 //USE_SERIAL.printf("[%u] Disconnected!\n", num);
+                if (_id_connection == num) {
+                    _id_connection = -1;
+                }
                 grbl_send(CLIENT_SERIAL , "WebUI Disconnected!\n");
                 break;
             case WStype_CONNECTED: {
