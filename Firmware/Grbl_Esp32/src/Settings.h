@@ -257,6 +257,7 @@ private:
     float _defaultValue;
     float _currentValue;
     float _storedValue;
+    bool  _hasStoredValue;
     float _minValue;
     float _maxValue;
 
@@ -290,6 +291,7 @@ public:
     const char* getDefaultString();
 
     float get() { return _currentValue; }
+    bool  hasStoredValue() { return _hasStoredValue; }
 };
 
 class StringSetting : public Setting {

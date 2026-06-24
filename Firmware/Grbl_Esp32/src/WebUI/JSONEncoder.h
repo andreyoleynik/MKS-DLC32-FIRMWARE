@@ -31,6 +31,7 @@ namespace WebUI {
 
         // end() returns the encoded string
         String end();
+            String value() const;
 
         // member() creates a "tag":"value" element
         void member(const char* tag, const char* value);

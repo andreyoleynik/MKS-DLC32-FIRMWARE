@@ -31,6 +31,15 @@ uint8_t n_homing_locate_cycle = NHomingLocateCycle;
 
 xQueueHandle limit_sw_queue;  // used by limit switch debouncing
 
+static float homing_pulloff_for_axis(uint8_t axis) {
+    switch (axis) {
+        case X_AXIS: return homing_pulloff_x->get() >= 0.0f ? homing_pulloff_x->get() : homing_pulloff->get();
+        case Y_AXIS: return homing_pulloff_y->get() >= 0.0f ? homing_pulloff_y->get() : homing_pulloff->get();
+        case Z_AXIS: return homing_pulloff_z->get() >= 0.0f ? homing_pulloff_z->get() : homing_pulloff->get();
+        default: return homing_pulloff->get();
+    }
+}
+
 // Homing axis search distance multiplier. Computed by this value times the cycle travel.
 #ifndef HOMING_AXIS_SEARCH_SCALAR
 #    define HOMING_AXIS_SEARCH_SCALAR 1.1  // Must be > 1 to ensure limit switch will be engaged.
@@ -220,10 +229,22 @@ void limits_go_home(uint8_t cycle_mask) {
         approach = !approach;
         // After first cycle, homing enters locating phase. Shorten search to pull-off distance.
         if (approach) {
-            max_travel  = homing_pulloff->get() * HOMING_AXIS_LOCATE_SCALAR;
+            float pulloff = 0.0f;
+            for (uint8_t idx = 0; idx < n_axis; idx++) {
+                if (bit_istrue(cycle_mask, bit(idx))) {
+                    pulloff = MAX(pulloff, homing_pulloff_for_axis(idx));
+                }
+            }
+            max_travel  = pulloff * HOMING_AXIS_LOCATE_SCALAR;
             homing_rate = homing_feed_rate->get();
         } else {
-            max_travel  = homing_pulloff->get();
+            float pulloff = 0.0f;
+            for (uint8_t idx = 0; idx < n_axis; idx++) {
+                if (bit_istrue(cycle_mask, bit(idx))) {
+                    pulloff = MAX(pulloff, homing_pulloff_for_axis(idx));
+                }
+            }
+            max_travel  = pulloff;
             homing_rate = homing_seek_rate->get();
         }
     } while (n_cycle-- > 0);
@@ -236,12 +257,12 @@ void limits_go_home(uint8_t cycle_mask) {
     int32_t set_axis_position;
     // Set machine positions for homed limit switches. Don't update non-homed axes.
     auto mask    = homing_dir_mask->get();
-    auto pulloff = homing_pulloff->get();
     for (uint8_t idx = 0; idx < n_axis; idx++) {
         auto steps = axis_settings[idx]->steps_per_mm->get();
         if (cycle_mask & bit(idx)) {
             float travel = axis_settings[idx]->max_travel->get();
             float mpos   = axis_settings[idx]->home_mpos->get();
+            float pulloff = homing_pulloff_for_axis(idx);
 
             if (bit_istrue(homing_dir_mask->get(), bit(idx))) {
                 sys_position[idx] = (mpos + pulloff) * steps;

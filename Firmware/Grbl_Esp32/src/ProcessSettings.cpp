@@ -138,6 +138,10 @@ void show_grbl_settings(WebUI::ESPResponseStream* out, type_t type, bool wantAxi
 Error report_normal_settings(const char* value, WebUI::AuthenticationLevel auth_level, WebUI::ESPResponseStream* out) {
     show_grbl_settings(out, GRBL, false);  // GRBL non-axis settings
     show_grbl_settings(out, GRBL, true);   // GRBL axis settings
+    // Keep axis-specific homing pull-off visible in legacy $$ output.
+    show_setting("271", homing_pulloff_x->getCompatibleValue(), NULL, out);
+    show_setting("272", homing_pulloff_y->getCompatibleValue(), NULL, out);
+    show_setting("273", homing_pulloff_z->getCompatibleValue(), NULL, out);
     return Error::Ok;
 }
 Error report_extended_settings(const char* value, WebUI::AuthenticationLevel auth_level, WebUI::ESPResponseStream* out) {

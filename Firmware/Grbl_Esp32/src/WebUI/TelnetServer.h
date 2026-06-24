@@ -28,7 +28,7 @@ class WiFiClient;
 namespace WebUI {
     class Telnet_Server {
 
-        static const int TELNETRXBUFFERSIZE = 1200;
+        static const int TELNETRXBUFFERSIZE = 512;
         static const int FLUSHTIMEOUT       = 500;
 
     public:

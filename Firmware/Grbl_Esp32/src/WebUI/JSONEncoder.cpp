@@ -76,6 +76,8 @@ namespace WebUI {
         return str;
     }
 
+    String JSONencoder::value() const { return str; }
+
     // Starts a member element.
     void JSONencoder::begin_member(const char* tag) {
         comma_line();

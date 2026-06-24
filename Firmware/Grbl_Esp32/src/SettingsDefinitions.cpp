@@ -50,6 +50,9 @@ FloatSetting*    homing_seek_rate;
 FloatSetting*    homing_debounce;
 FloatSetting*    homing_pulloff;
 AxisMaskSetting* homing_cycle[MAX_N_AXIS];
+FloatSetting*    homing_pulloff_x;
+FloatSetting*    homing_pulloff_y;
+FloatSetting*    homing_pulloff_z;
 FloatSetting*    spindle_pwm_freq;
 FloatSetting*    rpm_max;
 FloatSetting*    rpm_min;
@@ -385,6 +388,9 @@ void make_settings() {
     spindle_pwm_freq = new FloatSetting(GRBL, WG, "28", "Spindle/PWM/Frequency", DEFAULT_SPINDLE_FREQ, 0, 100000, checkSpindleChange);  // (0-100k  100000)
     
     homing_pulloff      = new FloatSetting(GRBL, WG, "27", "Homing/Pulloff", DEFAULT_HOMING_PULLOFF, 0, 1000);
+    homing_pulloff_x    = new FloatSetting(GRBL, WG, "271", "Homing/Pulloff/X", -1.0, -1000, 1000);
+    homing_pulloff_y    = new FloatSetting(GRBL, WG, "272", "Homing/Pulloff/Y", -1.0, -1000, 1000);
+    homing_pulloff_z    = new FloatSetting(GRBL, WG, "273", "Homing/Pulloff/Z", -1.0, -1000, 1000);
     homing_debounce     = new FloatSetting(GRBL, WG, "26", "Homing/Debounce", DEFAULT_HOMING_DEBOUNCE_DELAY, 0, 10000);
     homing_seek_rate    = new FloatSetting(GRBL, WG, "25", "Homing/Seek", DEFAULT_HOMING_SEEK_RATE, 0, 10000);
     homing_feed_rate    = new FloatSetting(GRBL, WG, "24", "Homing/Feed", DEFAULT_HOMING_FEED_RATE, 0, 10000);
