@@ -1,4 +1,5 @@
 #include "MKS_draw_tool.h"
+#include <esp_heap_caps.h>
 
 lv_style_t about_src1_style;
 lv_style_t btn_tool_style;
@@ -138,12 +139,16 @@ void mks_tool_heap_info_update(void) {
         return;
     }
 
-    char heap_info[64];
+    char heap_info[96];
+    uint32_t free_heap = (uint32_t)ESP.getFreeHeap();
+    uint32_t min_heap  = (uint32_t)xPortGetMinimumEverFreeHeapSize();
+    uint32_t lfb_heap  = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     snprintf(heap_info,
              sizeof(heap_info),
-             "Heap free/min: %u/%u",
-             (unsigned)ESP.getFreeHeap(),
-             (unsigned)xPortGetMinimumEverFreeHeapSize());
+             "Heap free/min/lfb: %u/%u/%u",
+             (unsigned)free_heap,
+             (unsigned)min_heap,
+             (unsigned)lfb_heap);
     lv_label_set_text(label_heap_info, heap_info);
 }
 
@@ -200,7 +205,7 @@ void mks_draw_tool(void) {
     snprintf(build_info, sizeof(build_info), "Build: %s %s", __DATE__, __TIME__);
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_build_version, 10, 235, build_info, 400);
 
-    label_heap_info = mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_heap_info, 10, 270, "Heap free/min: -/-", 400);
+    label_heap_info = mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_heap_info, 10, 270, "Heap free/min/lfb: -/-/-", 400);
     mks_tool_heap_info_update();
 
     strcat(cpu_info, String(ESP.getCpuFreqMHz()).c_str());

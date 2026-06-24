@@ -620,35 +620,35 @@ namespace WebUI {
 
         const esp_partition_t* core_part =
             esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
-
-        String json = "{";
-        json += "\"status\":\"ok\",";
-        json += "\"coreDumpApiAvailable\":";
-        json += CORE_DUMP_API_AVAILABLE ? "true" : "false";
-        json += ",";
-        json += "\"configuredToFlash\":";
+        const char* configured_to_flash = "false";
 #if defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH)
-        json += "true";
-#else
-        json += "false";
+        configured_to_flash             = "true";
 #endif
-        json += ",\"partitionPresent\":";
-        json += core_part ? "true" : "false";
-        json += ",\"imageAvailable\":";
-        json += has_image ? "true" : "false";
-        json += ",\"espErr\":";
-        json += String((int)err);
-        json += ",\"address\":";
-        json += String((unsigned)image_addr);
-        json += ",\"size\":";
-        json += String((unsigned)image_size);
+
+        char json[384];
         if (core_part) {
-            json += ",\"partitionAddress\":";
-            json += String((unsigned)core_part->address);
-            json += ",\"partitionSize\":";
-            json += String((unsigned)core_part->size);
+            snprintf(json,
+                 sizeof(json),
+                 "{\"status\":\"ok\",\"coreDumpApiAvailable\":%s,\"configuredToFlash\":%s,\"partitionPresent\":true,\"imageAvailable\":%s,\"espErr\":%d,\"address\":%u,\"size\":%u,\"partitionAddress\":%u,\"partitionSize\":%u}",
+                 CORE_DUMP_API_AVAILABLE ? "true" : "false",
+                 configured_to_flash,
+                 has_image ? "true" : "false",
+                 (int)err,
+                 (unsigned)image_addr,
+                 (unsigned)image_size,
+                 (unsigned)core_part->address,
+                 (unsigned)core_part->size);
+        } else {
+            snprintf(json,
+                 sizeof(json),
+                 "{\"status\":\"ok\",\"coreDumpApiAvailable\":%s,\"configuredToFlash\":%s,\"partitionPresent\":false,\"imageAvailable\":%s,\"espErr\":%d,\"address\":%u,\"size\":%u}",
+                 CORE_DUMP_API_AVAILABLE ? "true" : "false",
+                 configured_to_flash,
+                 has_image ? "true" : "false",
+                 (int)err,
+                 (unsigned)image_addr,
+                 (unsigned)image_size);
         }
-        json += "}";
 
         _webserver->send(200, "application/json", json);
     }
@@ -745,8 +745,7 @@ namespace WebUI {
             ClearAuthIP(_webserver->client().remoteIP(), sessionID.c_str());
             _webserver->sendHeader("Set-Cookie", "ESPSESSIONID=0");
             _webserver->sendHeader("Cache-Control", "no-cache");
-            String buffer2send = "{\"status\":\"Ok\",\"authentication_lvl\":\"guest\"}";
-            _webserver->send(code, "application/json", buffer2send);
+            _webserver->send(code, "application/json", "{\"status\":\"Ok\",\"authentication_lvl\":\"guest\"}");
             //_webserver->client().stop();
             return;
         }
@@ -864,11 +863,13 @@ namespace WebUI {
                 smsg = "Ok";
             }
 
-            //build  JSON
-            String buffer2send = "{\"status\":\"" + smsg + "\",\"authentication_lvl\":\"";
-            buffer2send += auths;
-            buffer2send += "\"}";
-            _webserver->send(code, "application/json", buffer2send);
+            char json[160];
+            snprintf(json,
+                     sizeof(json),
+                     "{\"status\":\"%s\",\"authentication_lvl\":\"%s\"}",
+                     smsg.c_str(),
+                     auths.c_str());
+            _webserver->send(code, "application/json", json);
         } else {
             if (auth_level != AuthenticationLevel::LEVEL_GUEST) {
                 String cookie = _webserver->header("Cookie");
@@ -883,12 +884,13 @@ namespace WebUI {
                     }
                 }
             }
-            String buffer2send = "{\"status\":\"200\",\"authentication_lvl\":\"";
-            buffer2send += auths;
-            buffer2send += "\",\"user\":\"";
-            buffer2send += sUser;
-            buffer2send += "\"}";
-            _webserver->send(code, "application/json", buffer2send);
+            char json[192];
+            snprintf(json,
+                     sizeof(json),
+                     "{\"status\":\"200\",\"authentication_lvl\":\"%s\",\"user\":\"%s\"}",
+                     auths.c_str(),
+                     sUser.c_str());
+            _webserver->send(code, "application/json", json);
         }
 #    else
         _webserver->sendHeader("Cache-Control", "no-cache");
@@ -1071,34 +1073,41 @@ namespace WebUI {
                 }
             }
             if (addtolist) {
-                String entryJson;
                 if (!firstentry) {
-                    entryJson += ",";
+                    _webserver->sendContent(",");
                 } else {
                     firstentry = false;
                 }
-                entryJson += "{\"name\":\"";
-                entryJson += filename;
-                entryJson += "\",\"size\":\"";
-                entryJson += size;
-                entryJson += "\"}";
-                _webserver->sendContent(entryJson);
+                _webserver->sendContent("{\"name\":\"");
+                _webserver->sendContent(filename);
+                _webserver->sendContent("\",\"size\":\"");
+                _webserver->sendContent(size);
+                _webserver->sendContent("\"}");
             }
             fileparsed = dir.openNextFile();
         }
         _webserver->sendContent("],");
-        _webserver->sendContent("\"path\":\"" + path + "\",");
-        _webserver->sendContent("\"status\":\"" + status + "\",");
+        _webserver->sendContent("\"path\":\"");
+        _webserver->sendContent(path);
+        _webserver->sendContent("\",\"status\":\"");
+        _webserver->sendContent(status);
+        _webserver->sendContent("\",");
         size_t totalBytes;
         size_t usedBytes;
         totalBytes = SPIFFS.totalBytes();
         usedBytes  = SPIFFS.usedBytes();
-        _webserver->sendContent("\"total\":\"" + ESPResponseStream::formatBytes(totalBytes) + "\",");
-        _webserver->sendContent("\"used\":\"" + ESPResponseStream::formatBytes(usedBytes) + "\",");
-        String tail = "\"occupation\":\"";
-        tail += String(100 * usedBytes / totalBytes);
-        tail += "\"}";
-        _webserver->sendContent(tail);
+        String totalStr = ESPResponseStream::formatBytes(totalBytes);
+        String usedStr  = ESPResponseStream::formatBytes(usedBytes);
+        _webserver->sendContent("\"total\":\"");
+        _webserver->sendContent(totalStr);
+        _webserver->sendContent("\",\"used\":\"");
+        _webserver->sendContent(usedStr);
+        _webserver->sendContent("\",\"occupation\":\"");
+        char occupation[16];
+        unsigned occPercent = (totalBytes > 0) ? (unsigned)(100 * usedBytes / totalBytes) : 0U;
+        snprintf(occupation, sizeof(occupation), "%u", occPercent);
+        _webserver->sendContent(occupation);
+        _webserver->sendContent("\"}");
         _webserver->sendContent("");
         path = "";
     }
@@ -1270,9 +1279,8 @@ namespace WebUI {
             return;
         }
 
-        String jsonfile = "{\"status\":\"";
-        jsonfile += String(int32_t(uint8_t(_upload_status)));
-        jsonfile += "\"}";
+        char jsonfile[32];
+        snprintf(jsonfile, sizeof(jsonfile), "{\"status\":\"%d\"}", (int)uint8_t(_upload_status));
 
         //send status
         _webserver->sendHeader("Cache-Control", "no-cache");
@@ -1449,10 +1457,12 @@ namespace WebUI {
         uint64_t usedspace  = 0;
         SDState  state      = get_sd_state(true);
         if (state != SDState::Idle) {
-            String status = "{\"status\":\"";
-            status += state == SDState::NotPresent ? "No SD Card\"}" : "Busy\"}";
             _webserver->sendHeader("Cache-Control", "no-cache");
-            _webserver->send(200, "application/json", status);
+            if (state == SDState::NotPresent) {
+                _webserver->send(200, "application/json", "{\"status\":\"No SD Card\"}");
+            } else {
+                _webserver->send(200, "application/json", "{\"status\":\"Busy\"}");
+            }
             return;
         }
         set_sd_state(SDState::BusyParsing);
@@ -1539,10 +1549,9 @@ namespace WebUI {
             path = path.substring(0, path.length() - 1);
         }
         if (path != "/" && !SD.exists(path)) {
-            String s = "{\"status\":\" ";
-            s += path;
-            s += " does not exist on SD Card\"}";
-            _webserver->send(200, "application/json", s);
+            char notFound[256];
+            snprintf(notFound, sizeof(notFound), "{\"status\":\" %s does not exist on SD Card\"}", path.c_str());
+            _webserver->send(200, "application/json", notFound);
             SD.end();
             set_sd_state(SDState::Idle);
             return;
@@ -1564,37 +1573,32 @@ namespace WebUI {
             int  i     = 0;
             while (entry) {
                 COMMANDS::wait(1);
-                String entryJson;
                 if (i > 0) {
-                    entryJson += ",";
+                    _webserver->sendContent(",");
                 }
-                entryJson += "{\"name\":\"";
+                _webserver->sendContent("{\"name\":\"");
                 String tmpname = entry.name();
                 int    pos     = tmpname.lastIndexOf("/");
                 tmpname        = tmpname.substring(pos + 1);
-                entryJson += tmpname;
-                entryJson += "\",\"shortname\":\"";  //No need here
-                entryJson += tmpname;
-                entryJson += "\",\"size\":\"";
+                _webserver->sendContent(tmpname);
+                _webserver->sendContent("\",\"shortname\":\"");  //No need here
+                _webserver->sendContent(tmpname);
+                _webserver->sendContent("\",\"size\":\"");
                 if (entry.isDirectory()) {
-                    entryJson += "-1";
+                    _webserver->sendContent("-1");
                 } else {
                     // files have sizes, directories do not
-                    entryJson += ESPResponseStream::formatBytes(entry.size());
+                    _webserver->sendContent(ESPResponseStream::formatBytes(entry.size()));
                 }
-                entryJson += "\",\"datetime\":\"";
+                _webserver->sendContent("\",\"datetime\":\"");
                 //TODO - can be done later
-                entryJson += "\"}";
-                _webserver->sendContent(entryJson);
+                _webserver->sendContent("\"}");
                 i++;
                 entry.close();
                 entry = dir.openNextFile();
             }
             dir.close();
         }
-        String tail = "],\"path\":\"";
-        tail += path + "\",";
-        tail += "\"total\":\"";
         String stotalspace, susedspace;
         //SDCard are in GB or MB but no less
         totalspace  = SD.totalBytes();
@@ -1610,25 +1614,27 @@ namespace WebUI {
         if (occupedspace <= 1) {
             occupedspace = 1;
         }
+        _webserver->sendContent("],\"path\":\"");
+        _webserver->sendContent(path);
+        _webserver->sendContent("\",\"total\":\"");
         if (totalspace) {
-            tail += stotalspace;
+            _webserver->sendContent(stotalspace);
         } else {
-            tail += "-1";
+            _webserver->sendContent("-1");
         }
-        tail += "\",\"used\":\"";
-        tail += susedspace;
-        tail += "\",\"occupation\":\"";
+        _webserver->sendContent("\",\"used\":\"");
+        _webserver->sendContent(susedspace);
+        _webserver->sendContent("\",\"occupation\":\"");
         if (totalspace) {
-            tail += String(occupedspace);
+            char occ[16];
+            snprintf(occ, sizeof(occ), "%u", (unsigned)occupedspace);
+            _webserver->sendContent(occ);
         } else {
-            tail += "-1";
+            _webserver->sendContent("-1");
         }
-        tail += "\",";
-        tail += "\"mode\":\"direct\",";
-        tail += "\"status\":\"";
-        tail += sstatus + "\"";
-        tail += "}";
-        _webserver->sendContent(tail);
+        _webserver->sendContent("\",\"mode\":\"direct\",\"status\":\"");
+        _webserver->sendContent(sstatus);
+        _webserver->sendContent("\"}");
         _webserver->sendContent("");
         set_sd_state(SDState::Idle);
         SD.end();
