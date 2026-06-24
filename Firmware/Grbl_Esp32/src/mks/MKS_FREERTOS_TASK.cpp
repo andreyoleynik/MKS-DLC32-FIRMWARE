@@ -1,5 +1,6 @@
 #include "MKS_FREERTOS_TASK.h"
 #include "MKS_draw_print.h"
+#include "MKS_draw_tool.h"
 #include "../Probe.h"
 
 #define DISP_TASK_STACK                 4096*2
@@ -242,6 +243,12 @@ static void mks_page_data_updata(void) {
             // 更新失败弹窗
             mks_draw_common_pupup_info("Error", "Update Fail", "Please Check mkscfg.txt or sdcard");
             mks_updata.updata_flag = UD_NONE;
+        }
+    }
+    else if (mks_ui_page.mks_ui_page == MKS_UI_Tool) {
+        if ((count_updata == 200) || (count_updata > 200)) {  // 200*5ms = 1s
+            mks_tool_heap_info_update();
+            count_updata = 0;
         }
     }
     count_updata++;

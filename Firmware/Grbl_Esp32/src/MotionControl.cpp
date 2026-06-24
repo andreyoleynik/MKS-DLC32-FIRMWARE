@@ -138,7 +138,7 @@ void mc_arc(float*            target,
     float rt_axis0     = target[axis_0] - center_axis0;
     float rt_axis1     = target[axis_1] - center_axis1;
 
-    float previous_position[MAX_N_AXIS] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+    float previous_position[MAX_N_AXIS] = { 0.0 };
 
     uint16_t n;
     auto     n_axis = number_axis->get();

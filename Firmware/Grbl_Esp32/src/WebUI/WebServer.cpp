@@ -562,14 +562,22 @@ namespace WebUI {
                 _webserver->send(401, "text/plain", "Authentication failed!\n");
                 return;
             }
-            //Instead of send several commands one by one by web  / send full set and split here
-            String      scmd;
-            bool hasError =false;
-            uint8_t     sindex = 0;
-            // TODO Settings - this is very inefficient.  get_Splited_Value() is O(n^2)
-            // when it could easily be O(n).  Also, it would be just as easy to push
-            // the entire string into Serial2Socket and pull off lines from there.
-            for (uint8_t sindex = 0; (scmd = get_Splited_Value(cmd, '\n', sindex)) != ""; sindex++) {
+            // Split once in linear time to avoid O(n^2) temporary String churn.
+            bool hasError = false;
+            int  lineStart = 0;
+            int  cmdLen    = cmd.length();
+            for (int i = 0; i <= cmdLen; i++) {
+                if (i != cmdLen && cmd[i] != '\n') {
+                    continue;
+                }
+
+                int lineLen = i - lineStart;
+                if (lineLen <= 0) {
+                    lineStart = i + 1;
+                    continue;
+                }
+
+                String scmd = cmd.substring(lineStart, i);
                 // 0xC2 is an HTML encoding prefix that, in UTF-8 mode,
                 // precede 0x90 and 0xa0-0bf, which are GRBL realtime commands.
                 // There are other encodings for 0x91-0x9f, so I am not sure
@@ -587,6 +595,8 @@ namespace WebUI {
                 if (!Serial2Socket.push(scmd.c_str())) {
                     hasError = true;
                 }
+
+                lineStart = i + 1;
             }
             _webserver->send(200, "text/plain", hasError?"Error":"");
         }
@@ -1805,9 +1815,9 @@ namespace WebUI {
         if ((millis() - timeout) > 10000 && _socket_server && (_socket_server->connectedClients(false) > 0)) {
             // In single-WebUI mode heartbeat includes ACTIVE id for legacy UI behavior.
             if (!webui_secondary_enable || (webui_secondary_enable->get() == 0)) {
-                String s = "PING:";
-                s += String(_id_connection);
-                _socket_server->broadcastTXT(s);
+                char pingMsg[24];
+                snprintf(pingMsg, sizeof(pingMsg), "PING:%ld", _id_connection);
+                _socket_server->broadcastTXT(pingMsg);
             }
             timeout = millis();
         }
@@ -1825,13 +1835,14 @@ namespace WebUI {
             case WStype_CONNECTED: {
                 IPAddress ip = _socket_server->remoteIP(num);
                 //USE_SERIAL.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-                String s = "CURRENT_ID:" + String(num);
+                char wsMsg[32];
+                snprintf(wsMsg, sizeof(wsMsg), "CURRENT_ID:%u", num);
                 // send message to client
                 _id_connection = num;
-                _socket_server->sendTXT(_id_connection, s);
+                _socket_server->sendTXT(_id_connection, wsMsg);
                 if (!webui_secondary_enable || (webui_secondary_enable->get() == 0)) {
-                    s = "ACTIVE_ID:" + String(_id_connection);
-                    _socket_server->broadcastTXT(s);
+                    snprintf(wsMsg, sizeof(wsMsg), "ACTIVE_ID:%ld", _id_connection);
+                    _socket_server->broadcastTXT(wsMsg);
                 }
 
                 grbl_send(CLIENT_SERIAL , "WebUI connected!\n");

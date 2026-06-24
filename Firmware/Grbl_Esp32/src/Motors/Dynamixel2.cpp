@@ -28,7 +28,7 @@
 
 namespace Motors {
     bool    Motors::Dynamixel2::uart_ready         = false;
-    uint8_t Motors::Dynamixel2::ids[MAX_N_AXIS][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
+    uint8_t Motors::Dynamixel2::ids[MAX_N_AXIS][2] = {};
 
     Dynamixel2::Dynamixel2(uint8_t axis_index, uint8_t id, uint8_t tx_pin, uint8_t rx_pin, uint8_t rts_pin) :
         Servo(axis_index), _id(id), _tx_pin(tx_pin), _rx_pin(rx_pin), _rts_pin(rts_pin) {

@@ -21,6 +21,7 @@ lv_obj_t* label_board_version;
 lv_obj_t* label_Firmware_version;
 lv_obj_t* label_build_version;
 lv_obj_t* label_cpu_info;
+lv_obj_t* label_heap_info;
 lv_obj_t* tool_btn_beep;
 lv_obj_t* label_tool_beep;
 lv_obj_t* tool_btn_sculpture_view;
@@ -132,6 +133,20 @@ static void event_btn_tool_sculpture_view(lv_obj_t* obj, lv_event_t event) {
     }
 }
 
+void mks_tool_heap_info_update(void) {
+    if (label_heap_info == NULL) {
+        return;
+    }
+
+    char heap_info[64];
+    snprintf(heap_info,
+             sizeof(heap_info),
+             "Heap free/min: %u/%u",
+             (unsigned)ESP.getFreeHeap(),
+             (unsigned)xPortGetMinimumEverFreeHeapSize());
+    lv_label_set_text(label_heap_info, heap_info);
+}
+
 void mks_draw_tool(void) {
 
     char cpu_info[128]="CPU:Freq:";
@@ -184,6 +199,9 @@ void mks_draw_tool(void) {
 
     snprintf(build_info, sizeof(build_info), "Build: %s %s", __DATE__, __TIME__);
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_build_version, 10, 235, build_info, 400);
+
+    label_heap_info = mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_heap_info, 10, 270, "Heap free/min: -/-", 400);
+    mks_tool_heap_info_update();
 
     strcat(cpu_info, String(ESP.getCpuFreqMHz()).c_str());
     strcat(cpu_info, "MHz/ T:");

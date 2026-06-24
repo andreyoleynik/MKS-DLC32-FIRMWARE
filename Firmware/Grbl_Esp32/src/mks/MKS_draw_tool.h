@@ -35,6 +35,7 @@ typedef struct {
 // void lv_draw_tool(void);
 void mks_draw_tool(void);
 void mks_clear_tool(void);
+void mks_tool_heap_info_update(void);
 void light_img_change(uint8_t status);
 void mks_draw_pos_pupop(void);
 

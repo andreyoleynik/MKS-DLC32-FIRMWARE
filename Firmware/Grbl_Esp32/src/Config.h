@@ -75,7 +75,7 @@ Some features should not be changed. See notes below.
 #    endif
 #endif
 
-const int MAX_N_AXIS = 6;
+const int MAX_N_AXIS = 3;
 
 // Number of axes defined (steppers, servos, etc) (valid range: 3 to 6)
 // Even if your machine only uses less than the minimum of 3, you should select 3

@@ -236,7 +236,7 @@ static const char* makeGrblName(int axisNum, int base) {
     // if (axisNum > 2) return NULL;
     char buf[4];
     snprintf(buf, 4, "%d", axisNum + base);
-    char* retval = (char*)malloc(strlen(buf));
+    char* retval = (char*)malloc(strlen(buf) + 1);
     return strcpy(retval, buf);
 }
 
@@ -278,9 +278,9 @@ void make_settings() {
     x_axis_settings = axis_settings[X_AXIS];
     y_axis_settings = axis_settings[Y_AXIS];
     z_axis_settings = axis_settings[Z_AXIS];
-    a_axis_settings = axis_settings[A_AXIS];
-    b_axis_settings = axis_settings[B_AXIS];
-    c_axis_settings = axis_settings[C_AXIS];
+    a_axis_settings = (MAX_N_AXIS > A_AXIS) ? axis_settings[A_AXIS] : nullptr;
+    b_axis_settings = (MAX_N_AXIS > B_AXIS) ? axis_settings[B_AXIS] : nullptr;
+    c_axis_settings = (MAX_N_AXIS > C_AXIS) ? axis_settings[C_AXIS] : nullptr;
     for (axis = MAX_N_AXIS - 1; axis >= 0; axis--) {
         def          = &axis_defaults[axis];
         auto setting = new IntSetting(

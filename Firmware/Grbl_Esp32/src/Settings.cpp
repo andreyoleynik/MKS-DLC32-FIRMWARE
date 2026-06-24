@@ -760,7 +760,7 @@ Error GrblCommand::action(char* value, WebUI::AuthenticationLevel auth_level, We
 Coordinates* coords[CoordIndex::End];
 
 bool Coordinates::load() {
-    size_t len;
+    size_t len = sizeof(_currentValue);
     switch (nvs_get_blob(Setting::_handle, _name, _currentValue, &len)) {
         case ESP_OK:
             return true;
