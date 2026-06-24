@@ -49,7 +49,7 @@ FloatSetting*    homing_feed_rate;
 FloatSetting*    homing_seek_rate;
 FloatSetting*    homing_debounce;
 FloatSetting*    homing_pulloff;
-AxisMaskSetting* homing_cycle[MAX_N_AXIS];
+AxisMaskSetting* homing_cycle[MAX_AXES];
 FloatSetting*    homing_pulloff_x;
 FloatSetting*    homing_pulloff_y;
 FloatSetting*    homing_pulloff_z;

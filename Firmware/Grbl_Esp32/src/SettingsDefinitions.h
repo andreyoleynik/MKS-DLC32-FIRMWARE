@@ -25,7 +25,7 @@ extern AxisMaskSetting* step_invert_mask;
 extern AxisMaskSetting* dir_invert_mask;
 extern AxisMaskSetting* homing_dir_mask;
 extern AxisMaskSetting* homing_squared_axes;
-extern AxisMaskSetting* homing_cycle[MAX_N_AXIS];
+extern AxisMaskSetting* homing_cycle[MAX_AXES];
 
 extern IntSetting* language_select;
 extern FlagSetting* beep_status;
