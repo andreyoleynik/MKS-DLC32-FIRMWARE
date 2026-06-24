@@ -1418,7 +1418,7 @@ namespace WebUI {
             if (!entry) {
                 break;
             }
-            String entryPath = entry.name();
+            String entryPath = entry.path();
             if (entry.isDirectory()) {
                 entry.close();
                 if (!deleteRecursive(entryPath)) {

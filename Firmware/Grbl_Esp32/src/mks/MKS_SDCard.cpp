@@ -147,6 +147,7 @@ String SdCard::readFileLine(const char* path, int num = 1)
 	}
 
 	char* p = buf;
+	size_t used = 0;
 	while (file.available())
 	{
 		char c = file.read();
@@ -163,7 +164,12 @@ String SdCard::readFileLine(const char* path, int num = 1)
 		}
 		else if (num == 1)
 		{
-			*(p++) = c;
+			if (used < sizeof(buf) - 1)  // не переполнять buf[FILE_SD_BUF], место под '\0'
+			{
+				*(p++) = c;
+				used++;
+			}
+			// иначе молча усекаем слишком длинную строку
 		}
 	}
 	file.close();

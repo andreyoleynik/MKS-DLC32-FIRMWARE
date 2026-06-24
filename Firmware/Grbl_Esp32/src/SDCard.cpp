@@ -89,7 +89,7 @@ void listDir(fs::FS& fs, const char* dirname, uint8_t levels, uint8_t client) {
     while (file) {
         if (file.isDirectory()) {
             if (levels) {
-                listDir(fs, file.name(), levels - 1, client);
+                listDir(fs, file.path(), levels - 1, client);
             }
         } else {
             memset(filename_check_str, 0, sizeof(filename_check_str));

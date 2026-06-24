@@ -1057,7 +1057,7 @@ namespace WebUI {
         while (file) {
             if (file.isDirectory()) {
                 if (levels) {
-                    listDirLocalFS(fs, file.name(), levels - 1, client);
+                    listDirLocalFS(fs, file.path(), levels - 1, client);
                 }
             } else {
                 grbl_sendf(CLIENT_ALL, "[FILE:%s|SIZE:%d]\r\n", file.name(), file.size());
@@ -1085,7 +1085,7 @@ namespace WebUI {
             tailName             = tailName ? tailName + 1 : file.name();
             if (file.isDirectory() && levels) {
                 j->begin_array(tailName);
-                listDirJSON(fs, file.name(), levels - 1, j);
+                listDirJSON(fs, file.path(), levels - 1, j);
                 j->end_array();
             } else {
                 j->begin_object();

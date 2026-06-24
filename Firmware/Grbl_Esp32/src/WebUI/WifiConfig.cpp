@@ -212,12 +212,18 @@ namespace WebUI {
                 grbl_sendf(CLIENT_ALL, "[MSG:Connected with %s]\r\n", WiFi.localIP().toString().c_str());
                     mks_grbl.wifi_connect_status = true;
                 break;
-            case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-                // reason-код (8=ASSOC_LEAVE, 15=4WAY_TIMEOUT/неверный пароль,
-                // 201=NO_AP_FOUND, 202=AUTH_FAIL, 205=CONNECTION_FAIL) — диагностика стабильности
-                grbl_sendf(CLIENT_ALL, "[MSG:Disconnected, reason %d]\r\n", (int)info.wifi_sta_disconnected.reason);
-                    mks_grbl.wifi_connect_status = false;
+            case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
+                // reason: 200=BEACON_TIMEOUT,201=NO_AP_FOUND,202=AUTH_FAIL,205=CONNECTION_FAIL,2=AUTH_EXPIRE.
+                // throttle 5с: при черче флакающего/mesh-роутера не флудить CNC/serial-поток (gcode-сендер).
+                static uint32_t last_disc_log = 0;
+                uint32_t        nowd          = millis();
+                if (nowd - last_disc_log > 5000) {
+                    grbl_sendf(CLIENT_ALL, "[MSG:Disconnected, reason %d]\r\n", (int)info.wifi_sta_disconnected.reason);
+                    last_disc_log = nowd;
+                }
+                mks_grbl.wifi_connect_status = false;
                 break;
+            }
             default:
                 break;
         }
@@ -365,9 +371,7 @@ namespace WebUI {
             IPAddress ip(IP), mask(MK), gateway(GW);
             WiFi.config(ip, gateway, mask);
         }
-        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);     // скан всех каналов: надёжнее на band-steered/mesh
-        WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL); // брать сильнейший BSSID (лечит reason 201 NO_AP_FOUND)
-        WiFi.setSleep(false);         // отключить modem-sleep: меньше дропов/auth-таймаутов STA
+        WiFi.setSleep(false);         // отключить modem-sleep: меньше дропов/auth-таймаутов STA, быстрый fast-scan reconnect
         WiFi.setAutoReconnect(true);  // ядро 2.0.x само реконнектит при обрыве (все reason-коды)
         if (WiFi.begin(SSID.c_str(), (password.length() > 0) ? password.c_str() : NULL)) {
             grbl_send(CLIENT_ALL, "\n[MSG:Client Started]\r\n");
@@ -416,9 +420,7 @@ namespace WebUI {
             IPAddress ip(IP), mask(MK), gateway(GW);
             WiFi.config(ip, gateway, mask);
         }
-        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);     // скан всех каналов: надёжнее на band-steered/mesh
-        WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL); // брать сильнейший BSSID (лечит reason 201 NO_AP_FOUND)
-        WiFi.setSleep(false);         // отключить modem-sleep: меньше дропов/auth-таймаутов STA
+        WiFi.setSleep(false);         // отключить modem-sleep: меньше дропов/auth-таймаутов STA, быстрый fast-scan reconnect
         WiFi.setAutoReconnect(true);  // ядро 2.0.x само реконнектит при обрыве (все reason-коды)
         if (WiFi.begin(SSID.c_str(), (password.length() > 0) ? password.c_str() : NULL)) {
             return mks_ConnectSTA2AP();
