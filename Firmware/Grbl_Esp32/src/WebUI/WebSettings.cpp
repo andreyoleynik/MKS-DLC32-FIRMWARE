@@ -60,6 +60,7 @@ namespace WebUI {
     StringSetting* wifi_hostname;
     EnumSetting*   http_enable;
     IntSetting*    http_port;
+    EnumSetting*   webui_secondary_enable;
     EnumSetting*   telnet_enable;
     IntSetting*    telnet_port;
 
@@ -688,16 +689,24 @@ namespace WebUI {
     }
 
     static Error listSettings(char* parameter, AuthenticationLevel auth_level) {  // ESP400
-        JSONencoder j(espresponse->client() != CLIENT_WEBUI);
-        j.begin();
-        j.begin_array("EEPROM");
+        webPrint("{\"EEPROM\":[");
+        bool     first        = true;
+        uint16_t webset_count = 0;
         for (Setting* js = Setting::List; js; js = js->next()) {
             if (js->getType() == WEBSET) {
-                js->addWebui(&j);
+                JSONencoder item(false);
+                js->addWebui(&item);
+                if (!first) {
+                    webPrint(",");
+                }
+                first = false;
+                webPrint(item.value());
+                if ((++webset_count & 0x0F) == 0) {
+                    COMMANDS::wait(0);
+                }
             }
         }
-        j.end_array();
-        webPrint(j.end());
+        webPrint("]}");
         return Error::Ok;
     }
 
@@ -1251,6 +1260,8 @@ namespace WebUI {
         http_port =
             new IntSetting("HTTP Port", WEBSET, WA, "ESP121", "Http/Port", DEFAULT_WEBSERVER_PORT, MIN_HTTP_PORT, MAX_HTTP_PORT, NULL);
         http_enable   = new EnumSetting("HTTP Enable", WEBSET, WA, "ESP120", "Http/Enable", DEFAULT_HTTP_STATE, &onoffOptions, NULL);
+        webui_secondary_enable =
+            new EnumSetting("Allow second WebUI", WEBSET, WA, "ESP122", "Http/SecondWebUI", 0, &onoffOptions, NULL);
         wifi_hostname = new StringSetting("Hostname",
                                           WEBSET,
                                           WA,

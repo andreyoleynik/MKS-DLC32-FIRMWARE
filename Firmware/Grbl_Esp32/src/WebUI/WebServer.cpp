@@ -1009,14 +1009,17 @@ namespace WebUI {
             }
         }
 
-        String jsonfile = "{";
         String ptmp     = path;
         if ((path != "/") && (path[path.length() - 1] = '/')) {
             ptmp = path.substring(0, path.length() - 1);
         }
 
         File dir = SPIFFS.open(ptmp);
-        jsonfile += "\"files\":[";
+        _webserver->setContentLength(CONTENT_LENGTH_UNKNOWN);
+        _webserver->sendHeader("Content-Type", "application/json");
+        _webserver->sendHeader("Cache-Control", "no-cache");
+        _webserver->send(200);
+        _webserver->sendContent("{\"files\":[");
         bool   firstentry = true;
         String subdirlist = "";
         File   fileparsed = dir.openNextFile();
@@ -1024,8 +1027,14 @@ namespace WebUI {
             String filename  = fileparsed.name();
             String size      = "";
             bool   addtolist = true;
-            //remove path from name
-            filename = filename.substring(path.length(), filename.length());
+            // Remove path prefix from name. For root path ('/'), keep the full filename.
+            if (path == "/") {
+                if (filename.startsWith("/")) {
+                    filename = filename.substring(1, filename.length());
+                }
+            } else {
+                filename = filename.substring(path.length(), filename.length());
+            }
             //check if file or subfile
             if (filename.indexOf("/") > -1) {
                 //Do not rely on "/." to define directory as SPIFFS upload won't create it but directly files
@@ -1052,37 +1061,36 @@ namespace WebUI {
                 }
             }
             if (addtolist) {
+                String entryJson;
                 if (!firstentry) {
-                    jsonfile += ",";
+                    entryJson += ",";
                 } else {
                     firstentry = false;
                 }
-                jsonfile += "{";
-                jsonfile += "\"name\":\"";
-                jsonfile += filename;
-                jsonfile += "\",\"size\":\"";
-                jsonfile += size;
-                jsonfile += "\"";
-                jsonfile += "}";
+                entryJson += "{\"name\":\"";
+                entryJson += filename;
+                entryJson += "\",\"size\":\"";
+                entryJson += size;
+                entryJson += "\"}";
+                _webserver->sendContent(entryJson);
             }
             fileparsed = dir.openNextFile();
         }
-        jsonfile += "],";
-        jsonfile += "\"path\":\"" + path + "\",";
-        jsonfile += "\"status\":\"" + status + "\",";
+        _webserver->sendContent("],");
+        _webserver->sendContent("\"path\":\"" + path + "\",");
+        _webserver->sendContent("\"status\":\"" + status + "\",");
         size_t totalBytes;
         size_t usedBytes;
         totalBytes = SPIFFS.totalBytes();
         usedBytes  = SPIFFS.usedBytes();
-        jsonfile += "\"total\":\"" + ESPResponseStream::formatBytes(totalBytes) + "\",";
-        jsonfile += "\"used\":\"" + ESPResponseStream::formatBytes(usedBytes) + "\",";
-        jsonfile.concat(F("\"occupation\":\""));
-        jsonfile += String(100 * usedBytes / totalBytes);
-        jsonfile += "\"";
-        jsonfile += "}";
+        _webserver->sendContent("\"total\":\"" + ESPResponseStream::formatBytes(totalBytes) + "\",");
+        _webserver->sendContent("\"used\":\"" + ESPResponseStream::formatBytes(usedBytes) + "\",");
+        String tail = "\"occupation\":\"";
+        tail += String(100 * usedBytes / totalBytes);
+        tail += "\"}";
+        _webserver->sendContent(tail);
+        _webserver->sendContent("");
         path = "";
-        _webserver->sendHeader("Cache-Control", "no-cache");
-        _webserver->send(200, "application/json", jsonfile);
     }
 
     //push error code and message to websocket
@@ -1517,10 +1525,6 @@ namespace WebUI {
             list_files = false;
         }
 
-        // TODO Settings - consider using the JSONEncoder class
-        String jsonfile = "{";
-        jsonfile += "\"files\":[";
-
         if (path != "/") {
             path = path.substring(0, path.length() - 1);
         }
@@ -1533,6 +1537,13 @@ namespace WebUI {
             set_sd_state(SDState::Idle);
             return;
         }
+
+        _webserver->setContentLength(CONTENT_LENGTH_UNKNOWN);
+        _webserver->sendHeader("Content-Type", "application/json");
+        _webserver->sendHeader("Cache-Control", "no-cache");
+        _webserver->send(200);
+        _webserver->sendContent("{\"files\":[");
+
         if (list_files) {
             File dir = SD.open(path);
             if (!dir.isDirectory()) {
@@ -1543,35 +1554,37 @@ namespace WebUI {
             int  i     = 0;
             while (entry) {
                 COMMANDS::wait(1);
+                String entryJson;
                 if (i > 0) {
-                    jsonfile += ",";
+                    entryJson += ",";
                 }
-                jsonfile += "{\"name\":\"";
+                entryJson += "{\"name\":\"";
                 String tmpname = entry.name();
                 int    pos     = tmpname.lastIndexOf("/");
                 tmpname        = tmpname.substring(pos + 1);
-                jsonfile += tmpname;
-                jsonfile += "\",\"shortname\":\"";  //No need here
-                jsonfile += tmpname;
-                jsonfile += "\",\"size\":\"";
+                entryJson += tmpname;
+                entryJson += "\",\"shortname\":\"";  //No need here
+                entryJson += tmpname;
+                entryJson += "\",\"size\":\"";
                 if (entry.isDirectory()) {
-                    jsonfile += "-1";
+                    entryJson += "-1";
                 } else {
                     // files have sizes, directories do not
-                    jsonfile += ESPResponseStream::formatBytes(entry.size());
+                    entryJson += ESPResponseStream::formatBytes(entry.size());
                 }
-                jsonfile += "\",\"datetime\":\"";
+                entryJson += "\",\"datetime\":\"";
                 //TODO - can be done later
-                jsonfile += "\"}";
+                entryJson += "\"}";
+                _webserver->sendContent(entryJson);
                 i++;
                 entry.close();
                 entry = dir.openNextFile();
             }
             dir.close();
         }
-        jsonfile += "],\"path\":\"";
-        jsonfile += path + "\",";
-        jsonfile += "\"total\":\"";
+        String tail = "],\"path\":\"";
+        tail += path + "\",";
+        tail += "\"total\":\"";
         String stotalspace, susedspace;
         //SDCard are in GB or MB but no less
         totalspace  = SD.totalBytes();
@@ -1588,25 +1601,25 @@ namespace WebUI {
             occupedspace = 1;
         }
         if (totalspace) {
-            jsonfile += stotalspace;
+            tail += stotalspace;
         } else {
-            jsonfile += "-1";
+            tail += "-1";
         }
-        jsonfile += "\",\"used\":\"";
-        jsonfile += susedspace;
-        jsonfile += "\",\"occupation\":\"";
+        tail += "\",\"used\":\"";
+        tail += susedspace;
+        tail += "\",\"occupation\":\"";
         if (totalspace) {
-            jsonfile += String(occupedspace);
+            tail += String(occupedspace);
         } else {
-            jsonfile += "-1";
+            tail += "-1";
         }
-        jsonfile += "\",";
-        jsonfile += "\"mode\":\"direct\",";
-        jsonfile += "\"status\":\"";
-        jsonfile += sstatus + "\"";
-        jsonfile += "}";
-        _webserver->sendHeader("Cache-Control", "no-cache");
-        _webserver->send(200, "application/json", jsonfile);
+        tail += "\",";
+        tail += "\"mode\":\"direct\",";
+        tail += "\"status\":\"";
+        tail += sstatus + "\"";
+        tail += "}";
+        _webserver->sendContent(tail);
+        _webserver->sendContent("");
         set_sd_state(SDState::Idle);
         SD.end();
     }
@@ -1790,9 +1803,12 @@ namespace WebUI {
             _socket_server->loop();
         }
         if ((millis() - timeout) > 10000 && _socket_server && (_socket_server->connectedClients(false) > 0)) {
-            String s = "PING:";
-            s += String(_id_connection);
-            _socket_server->broadcastTXT(s);
+            // In single-WebUI mode heartbeat includes ACTIVE id for legacy UI behavior.
+            if (!webui_secondary_enable || (webui_secondary_enable->get() == 0)) {
+                String s = "PING:";
+                s += String(_id_connection);
+                _socket_server->broadcastTXT(s);
+            }
             timeout = millis();
         }
     }
@@ -1813,8 +1829,10 @@ namespace WebUI {
                 // send message to client
                 _id_connection = num;
                 _socket_server->sendTXT(_id_connection, s);
-                s = "ACTIVE_ID:" + String(_id_connection);
-                _socket_server->broadcastTXT(s);
+                if (!webui_secondary_enable || (webui_secondary_enable->get() == 0)) {
+                    s = "ACTIVE_ID:" + String(_id_connection);
+                    _socket_server->broadcastTXT(s);
+                }
 
                 grbl_send(CLIENT_SERIAL , "WebUI connected!\n");
             } break;
