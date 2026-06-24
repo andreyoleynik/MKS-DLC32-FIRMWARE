@@ -730,6 +730,155 @@ namespace WebUI {
     }
 #endif
 
+    static Error runSDFile(char* parameter, AuthenticationLevel auth_level);
+
+    static String normalizeSettingsPath(char* parameter) {
+        String path;
+        if (parameter) {
+            path = trim(parameter);
+        }
+        if (path.length() == 0) {
+            path = "/Backup/backup.txt";
+        }
+        if (path[0] != '/') {
+            path = "/" + path;
+        }
+        return path;
+    }
+
+    static Error backupSettingsToSD(char* parameter, AuthenticationLevel auth_level) {  // ESP223
+        String path = normalizeSettingsPath(parameter);
+
+        SDState state = get_sd_state(true);
+        if (state != SDState::Idle) {
+            webPrintln((state == SDState::NotPresent) ? "No SD card" : "Busy");
+            return (state == SDState::NotPresent) ? Error::FsFailedMount : Error::FsFailedBusy;
+        }
+
+        if (!SD.exists("/Settings")) {
+            SD.mkdir("/Settings");
+        }
+
+        if (SD.exists(path.c_str())) {
+            SD.remove(path.c_str());
+        }
+
+        File outFile = SD.open(path.c_str(), FILE_WRITE);
+        if (!outFile) {
+            webPrintln("Cannot open settings backup file");
+            return Error::FsFailedOpenFile;
+        }
+
+        uint16_t count = 0;
+        for (Setting* s = Setting::List; s; s = s->next()) {
+            type_t t = s->getType();
+            if (t != GRBL && t != EXTENDED && t != WEBSET) {
+                continue;
+            }
+
+            const char* value = s->getBackupValue();
+            if (!value) {
+                continue;
+            }
+
+            const char* key = s->getName();
+            if ((t == GRBL || t == EXTENDED) && s->getGrblName()) {
+                key = s->getGrblName();
+            }
+
+            outFile.print("$");
+            outFile.print(key);
+            outFile.print("=");
+            outFile.println(value);
+            ++count;
+
+            if ((count & 0x1F) == 0) {
+                COMMANDS::wait(0);
+            }
+        }
+
+        outFile.close();
+        webPrintln("Saved settings to ", path);
+        return Error::Ok;
+    }
+
+    static Error restoreSettingsFromSD(char* parameter, AuthenticationLevel auth_level) {  // ESP224
+        String path = normalizeSettingsPath(parameter);
+
+        if (sys.state == State::Cycle || sys.state == State::Jog || sys.state == State::Homing ||
+            sys.state == State::CheckMode || (sys.state == State::Hold && !sys.suspend.bit.holdComplete)) {
+            webPrintln("Busy");
+            return Error::IdleError;
+        }
+
+        SDState state = get_sd_state(true);
+        if (state != SDState::Idle) {
+            webPrintln((state == SDState::NotPresent) ? "No SD card" : "Busy");
+            return (state == SDState::NotPresent) ? Error::FsFailedMount : Error::FsFailedBusy;
+        }
+
+        File inFile = SD.open(path.c_str(), FILE_READ);
+        if (!inFile) {
+            webPrintln("Cannot open settings file");
+            return Error::FsFailedOpenFile;
+        }
+
+        uint32_t lineNumber = 0;
+        uint32_t applied    = 0;
+        uint32_t skipped    = 0;
+        uint8_t  client     = (espresponse) ? espresponse->client() : CLIENT_ALL;
+
+        while (inFile.available()) {
+            String line = inFile.readStringUntil('\n');
+            ++lineNumber;
+            line.trim();
+
+            // Strip UTF-8 BOM on first line if file was edited on PC tools.
+            if (lineNumber == 1 && line.length() >= 3 &&
+                (uint8_t)line[0] == 0xEF && (uint8_t)line[1] == 0xBB && (uint8_t)line[2] == 0xBF) {
+                line.remove(0, 3);
+                line.trim();
+            }
+
+            if (line.length() == 0 || line[0] == ';' || line[0] == '#') {
+                continue;
+            }
+
+            // Older backups may contain masked password placeholders that are not restorable.
+            if (line.endsWith("=******")) {
+                ++skipped;
+                continue;
+            }
+
+            char lineBuf[256];
+            if (line.length() >= sizeof(lineBuf)) {
+                ++skipped;
+                webPrintln("Skipped too long line: ", String(lineNumber));
+                continue;
+            }
+
+            strncpy(lineBuf, line.c_str(), sizeof(lineBuf) - 1);
+            lineBuf[sizeof(lineBuf) - 1] = '\0';
+
+            Error err = execute_line(lineBuf, client, auth_level);
+            if (err == Error::Ok) {
+                ++applied;
+            } else {
+                ++skipped;
+                webPrintln("Skipped line ", String(lineNumber) + " error:" + String((int)err));
+            }
+
+            if (((applied + skipped) & 0x1F) == 0) {
+                COMMANDS::wait(0);
+            }
+        }
+
+        inFile.close();
+        webPrintln("Restore done. Applied:", String(applied));
+        webPrintln("Skipped:", String(skipped));
+        return (applied > 0) ? Error::Ok : Error::InvalidValue;
+    }
+
     static Error openSDFile(char* parameter) {
         if (*parameter == '\0') {
             webPrintln("Missing file name!");
@@ -1167,6 +1316,10 @@ namespace WebUI {
         new WebCommand("path", WEBCMD, WU, "ESP221", "SD/Show", showSDFile);
         new WebCommand("path", WEBCMD, WU, "ESP220", "SD/Run", runSDFile);
     new WebCommand(NULL, WEBCMD, WU, "ESP222", "SD/Stop", stopSDFile, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "ESP223", "SD/SettingsBackup", backupSettingsToSD, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "ESP224", "SD/SettingsRestore", restoreSettingsFromSD, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "BACKUP", "Settings/BackupToSD", backupSettingsToSD, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "RESTORE", "Settings/RestoreFromSD", restoreSettingsFromSD, anyState);
         new WebCommand("file_or_directory_path", WEBCMD, WU, "ESP215", "SD/Delete", deleteSDObject);
         new WebCommand(NULL, WEBCMD, WU, "ESP210", "SD/List", listSDFiles);
 #endif

@@ -91,6 +91,21 @@ Reply: 81
 * Print SD file
 [ESP220] <Filename> pwd=<user/admin password>
 
+* Save all GRBL/extended/web settings to SD file
+Default path: /Settings/settings_backup.nc
+[ESP223] <optional path> pwd=<admin password>
+
+* Restore all GRBL/extended/web settings from SD file
+Default path: /Settings/settings_backup.nc
+[ESP224] <optional path> pwd=<admin password>
+
+* Short aliases for WebUI console
+$BACKUP
+$RESTORE
+Optional custom path:
+$BACKUP=/Settings/my_backup.nc
+$RESTORE=/Settings/my_backup.nc
+
 *Get full EEPROM settings content
 but do not give any passwords
 [ESP400] pwd=<user/admin password>
