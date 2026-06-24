@@ -26,10 +26,14 @@
 
 namespace WebUI {
 #if defined(ENABLE_HTTP) && defined(ENABLE_WIFI)
+    static const size_t HTTP_RESPONSE_CHUNK_FLUSH = 512;
+    static const size_t HTTP_RESPONSE_CHUNK_RESERVE = 640;
+
     ESPResponseStream::ESPResponseStream(WebServer* webserver) {
         _header_sent = false;
         _webserver   = webserver;
         _client      = CLIENT_WEBUI;
+        _buffer.reserve(HTTP_RESPONSE_CHUNK_RESERVE);
     }
 #endif
 
@@ -38,6 +42,7 @@ namespace WebUI {
 #if defined(ENABLE_HTTP) && defined(ENABLE_WIFI)
         _header_sent = false;
         _webserver   = NULL;
+        _buffer.reserve(HTTP_RESPONSE_CHUNK_RESERVE);
 #endif
     }
 
@@ -47,6 +52,7 @@ namespace WebUI {
 #if defined(ENABLE_HTTP) && defined(ENABLE_WIFI)
         _header_sent = false;
         _webserver   = NULL;
+        _buffer.reserve(HTTP_RESPONSE_CHUNK_RESERVE);
 #endif
     }
 
@@ -87,11 +93,11 @@ namespace WebUI {
             }
 
             _buffer += data;
-            if (_buffer.length() > 1200) {
+            if (_buffer.length() >= HTTP_RESPONSE_CHUNK_FLUSH) {
                 //send data
                 _webserver->sendContent(_buffer);
                 //reset buffer
-                _buffer = "";
+                _buffer.remove(0);
             }
             return;
         }
@@ -112,7 +118,7 @@ namespace WebUI {
                 _webserver->sendContent("");
             }
             _header_sent = false;
-            _buffer      = "";
+            _buffer.remove(0);
         }
 #endif
     }

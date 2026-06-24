@@ -208,11 +208,12 @@ void mks_draw_tool(void) {
     label_heap_info = mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_heap_info, 10, 270, "Heap free/min/lfb: -/-/-", 400);
     mks_tool_heap_info_update();
 
-    strcat(cpu_info, String(ESP.getCpuFreqMHz()).c_str());
-    strcat(cpu_info, "MHz/ T:");
-    strcat(cpu_info, String(temperatureRead(), 1).c_str());
-    strcat(cpu_info, "C/ ID:");
-    strcat(cpu_info, String((uint16_t)(ESP.getEfuseMac() >> 32)).c_str());
+    snprintf(cpu_info,
+             sizeof(cpu_info),
+             "CPU:Freq:%uMHz/ T:%.1fC/ ID:%u",
+             (unsigned)ESP.getCpuFreqMHz(),
+             (double)temperatureRead(),
+             (unsigned)((uint16_t)(ESP.getEfuseMac() >> 32)));
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_cpu_info, 10, 190, cpu_info, 400);
     mks_ui_page.mks_ui_page = MKS_UI_Tool; 
 }

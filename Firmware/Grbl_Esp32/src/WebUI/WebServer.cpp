@@ -38,6 +38,7 @@
 #    include <WebServer.h>
 #    include <ESP32SSDP.h>
 #    include <StreamString.h>
+#    include <strings.h>
 #    include <Update.h>
 #    include <esp_wifi_types.h>
 #    include <esp_partition.h>
@@ -128,6 +129,22 @@ namespace WebUI {
             case State::SafetyDoor: return "SafetyDoor";
             case State::Sleep: return "Sleep";
             default: return "Unknown";
+        }
+    }
+
+    static void format_bytes_to_text(uint64_t bytes, char* out, size_t out_len) {
+        if (out_len == 0) {
+            return;
+        }
+
+        if (bytes < 1024ULL) {
+            snprintf(out, out_len, "%u B", (unsigned)bytes);
+        } else if (bytes < (1024ULL * 1024ULL)) {
+            snprintf(out, out_len, "%.2f KB", (double)bytes / 1024.0);
+        } else if (bytes < (1024ULL * 1024ULL * 1024ULL)) {
+            snprintf(out, out_len, "%.2f MB", (double)bytes / (1024.0 * 1024.0));
+        } else {
+            snprintf(out, out_len, "%.2f GB", (double)bytes / (1024.0 * 1024.0 * 1024.0));
         }
     }
 
@@ -520,7 +537,7 @@ namespace WebUI {
         //    }
         //}
         AuthenticationLevel auth_level = is_authenticated();
-        String              cmd        = "";
+        String              cmd;
         if (_webserver->hasArg("plain")) {
             cmd = _webserver->arg("plain");
         } else if (_webserver->hasArg("commandText")) {
@@ -539,16 +556,15 @@ namespace WebUI {
             strncpy(line, espCmd.c_str(), 255);
             ESPResponseStream* espresponse = silent ? NULL : new ESPResponseStream(_webserver);
             Error              err         = system_execute_line(line, espresponse, auth_level);
-            String             answer;
+            char               answer[96];
             if (err == Error::Ok) {
-                answer = "ok";
+                snprintf(answer, sizeof(answer), "ok");
             } else {
                 const char* msg = errorString(err);
-                answer          = "Error: ";
                 if (msg) {
-                    answer += msg;
+                    snprintf(answer, sizeof(answer), "Error: %s", msg);
                 } else {
-                    answer += static_cast<int>(err);
+                    snprintf(answer, sizeof(answer), "Error: %d", static_cast<int>(err));
                 }
             }
             if (silent || !espresponse->anyOutput()) {
@@ -566,6 +582,9 @@ namespace WebUI {
             bool hasError = false;
             int  lineStart = 0;
             int  cmdLen    = cmd.length();
+            const char* cmdData = cmd.c_str();
+            String scmd;
+            scmd.reserve(258);
             for (int i = 0; i <= cmdLen; i++) {
                 if (i != cmdLen && cmd[i] != '\n') {
                     continue;
@@ -577,19 +596,20 @@ namespace WebUI {
                     continue;
                 }
 
-                String scmd = cmd.substring(lineStart, i);
+                scmd.remove(0);
+                scmd.concat(cmdData + lineStart, (unsigned int)lineLen);
                 // 0xC2 is an HTML encoding prefix that, in UTF-8 mode,
                 // precede 0x90 and 0xa0-0bf, which are GRBL realtime commands.
                 // There are other encodings for 0x91-0x9f, so I am not sure
                 // how - or whether - those commands work.
                 // Ref: https://www.w3schools.com/tags/ref_urlencode.ASP
-                if (!silent && (scmd.length() == 2) && (scmd[0] == 0xC2)) {
+                if (!silent && (scmd.length() == 2) && ((uint8_t)scmd[0] == 0xC2)) {
                     scmd[0] = scmd[1];
                     scmd.remove(1, 1);
                 }
                 if (scmd.length() > 1) {
                     scmd += "\n";
-                } else if (!is_realtime_command(scmd[0])) {
+                } else if (!is_realtime_command((uint8_t)scmd[0])) {
                     scmd += "\n";
                 }
                 if (!Serial2Socket.push(scmd.c_str())) {
@@ -1577,18 +1597,20 @@ namespace WebUI {
                     _webserver->sendContent(",");
                 }
                 _webserver->sendContent("{\"name\":\"");
-                String tmpname = entry.name();
-                int    pos     = tmpname.lastIndexOf("/");
-                tmpname        = tmpname.substring(pos + 1);
-                _webserver->sendContent(tmpname);
+                const char* entry_name = entry.name();
+                const char* base_name  = strrchr(entry_name, '/');
+                base_name              = (base_name == NULL) ? entry_name : (base_name + 1);
+                _webserver->sendContent(base_name);
                 _webserver->sendContent("\",\"shortname\":\"");  //No need here
-                _webserver->sendContent(tmpname);
+                _webserver->sendContent(base_name);
                 _webserver->sendContent("\",\"size\":\"");
                 if (entry.isDirectory()) {
                     _webserver->sendContent("-1");
                 } else {
                     // files have sizes, directories do not
-                    _webserver->sendContent(ESPResponseStream::formatBytes(entry.size()));
+                    char size_text[24];
+                    format_bytes_to_text(entry.size(), size_text, sizeof(size_text));
+                    _webserver->sendContent(size_text);
                 }
                 _webserver->sendContent("\",\"datetime\":\"");
                 //TODO - can be done later
@@ -1599,17 +1621,20 @@ namespace WebUI {
             }
             dir.close();
         }
-        String stotalspace, susedspace;
+        char stotalspace[24];
+        char susedspace[24];
         //SDCard are in GB or MB but no less
         totalspace  = SD.totalBytes();
         usedspace   = SD.usedBytes();
-        stotalspace = ESPResponseStream::formatBytes(totalspace);
-        susedspace  = ESPResponseStream::formatBytes(usedspace + 1);
+        format_bytes_to_text(totalspace, stotalspace, sizeof(stotalspace));
+        format_bytes_to_text(usedspace + 1, susedspace, sizeof(susedspace));
 
         uint32_t occupedspace = 1;
         uint32_t usedspace2   = usedspace / (1024 * 1024);
         uint32_t totalspace2  = totalspace / (1024 * 1024);
-        occupedspace          = (usedspace2 * 100) / totalspace2;
+        if (totalspace2 != 0) {
+            occupedspace = (usedspace2 * 100) / totalspace2;
+        }
         //minimum if even one byte is used is 1%
         if (occupedspace <= 1) {
             occupedspace = 1;
@@ -1878,7 +1903,7 @@ namespace WebUI {
     // The string that is returned does not contain the separator
     // The calling code adds back the separator, unless the string is
     // a one-character realtime command.
-    String Web_Server::get_Splited_Value(String data, char separator, int index) {
+    String Web_Server::get_Splited_Value(const String& data, char separator, int index) {
         int found      = 0;
         int strIndex[] = { 0, -1 };
         int maxIndex   = data.length() - 1;
@@ -1896,36 +1921,35 @@ namespace WebUI {
 
     //helper to extract content type from file extension
     //Check what is the content tye according extension file
-    String Web_Server::getContentType(String filename) {
-        String file_name = filename;
-        file_name.toLowerCase();
-        if (filename.endsWith(".htm")) {
+    String Web_Server::getContentType(const String& filename) {
+        const char* ext = strrchr(filename.c_str(), '.');
+        if (ext == NULL) {
+            return "application/octet-stream";
+        }
+
+        if (strcasecmp(ext, ".htm") == 0 || strcasecmp(ext, ".html") == 0) {
             return "text/html";
-        } else if (file_name.endsWith(".html")) {
-            return "text/html";
-        } else if (file_name.endsWith(".css")) {
+        } else if (strcasecmp(ext, ".css") == 0) {
             return "text/css";
-        } else if (file_name.endsWith(".js")) {
+        } else if (strcasecmp(ext, ".js") == 0) {
             return "application/javascript";
-        } else if (file_name.endsWith(".png")) {
+        } else if (strcasecmp(ext, ".png") == 0) {
             return "image/png";
-        } else if (file_name.endsWith(".gif")) {
+        } else if (strcasecmp(ext, ".gif") == 0) {
             return "image/gif";
-        } else if (file_name.endsWith(".jpeg")) {
+        } else if (strcasecmp(ext, ".jpeg") == 0 || strcasecmp(ext, ".jpg") == 0) {
             return "image/jpeg";
-        } else if (file_name.endsWith(".jpg")) {
-            return "image/jpeg";
-        } else if (file_name.endsWith(".ico")) {
+        } else if (strcasecmp(ext, ".ico") == 0) {
             return "image/x-icon";
-        } else if (file_name.endsWith(".xml")) {
+        } else if (strcasecmp(ext, ".xml") == 0) {
             return "text/xml";
-        } else if (file_name.endsWith(".pdf")) {
+        } else if (strcasecmp(ext, ".pdf") == 0) {
             return "application/x-pdf";
-        } else if (file_name.endsWith(".zip")) {
+        } else if (strcasecmp(ext, ".zip") == 0) {
             return "application/x-zip";
-        } else if (file_name.endsWith(".gz")) {
+        } else if (strcasecmp(ext, ".gz") == 0) {
             return "application/x-gzip";
-        } else if (file_name.endsWith(".txt")) {
+        } else if (strcasecmp(ext, ".txt") == 0) {
             return "text/plain";
         }
         return "application/octet-stream";

@@ -61,8 +61,8 @@ namespace WebUI {
         static WebSocketsServer*   _socket_server;
         static uint16_t            _port;
         static UploadStatusType    _upload_status;
-        static String              getContentType(String filename);
-        static String              get_Splited_Value(String data, char separator, int index);
+        static String              getContentType(const String& filename);
+        static String              get_Splited_Value(const String& data, char separator, int index);
         static AuthenticationLevel is_authenticated();
 #ifdef ENABLE_AUTHENTICATION
         static AuthenticationIP*   _head;

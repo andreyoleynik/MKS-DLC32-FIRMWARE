@@ -1,5 +1,6 @@
 #include "Grbl.h"
 #include <map>
+#include <vector>
 #include "Regex.h"
 #include <esp_partition.h>
 #if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
@@ -124,24 +125,81 @@ Error report_gcode(const char* value, WebUI::AuthenticationLevel auth_level, Web
 }
 
 void show_grbl_settings(WebUI::ESPResponseStream* out, type_t type, bool wantAxis) {
+    std::vector<Setting*> matched;
+    matched.reserve(128);
+
     for (Setting* s = Setting::List; s; s = s->next()) {
         if (s->getType() == type && s->getGrblName()) {
             bool isAxis = s->getAxis() != NO_AXIS;
             // The following test could be expressed more succinctly with XOR,
             // but is arguably clearer when written out
             if ((wantAxis && isAxis) || (!wantAxis && !isAxis)) {
-                show_setting(s->getGrblName(), s->getCompatibleValue(), NULL, out);
+                matched.push_back(s);
             }
         }
+    }
+
+    // Sort key: numbers < 100 → N*1000; numbers ≥ 100 → (N/10)*1000 + (N%10).
+    // This causes "27N" variants (271, 272, 273) to sort immediately after
+    // their parent "27" but before "28", giving logical grouping:
+    //   ..., $27, $271, $272, $273, $28, ...
+    // The same formula correctly sorts axis settings 100-132 within their block.
+    auto sort_key = [](long n) -> long {
+        if (n < 100) {
+            return n * 1000;
+        }
+        return (n / 10) * 1000 + (n % 10);
+    };
+
+    auto grbl_name_less = [&sort_key](Setting* a, Setting* b) {
+        const char* an = a->getGrblName();
+        const char* bn = b->getGrblName();
+
+        char* a_end = nullptr;
+        char* b_end = nullptr;
+        long  a_num = strtol(an, &a_end, 10);
+        long  b_num = strtol(bn, &b_end, 10);
+
+        bool a_is_num = (a_end != nullptr) && (*a_end == '\0');
+        bool b_is_num = (b_end != nullptr) && (*b_end == '\0');
+
+        if (a_is_num && b_is_num) {
+            long ak = sort_key(a_num);
+            long bk = sort_key(b_num);
+            if (ak != bk) {
+                return ak < bk;
+            }
+            return strcmp(an, bn) < 0;
+        }
+
+        if (a_is_num != b_is_num) {
+            return a_is_num;
+        }
+
+        return strcasecmp(an, bn) < 0;
+    };
+
+    for (size_t i = 1; i < matched.size(); ++i) {
+        Setting* key = matched[i];
+        size_t   j   = i;
+        while (j > 0 && grbl_name_less(key, matched[j - 1])) {
+            matched[j] = matched[j - 1];
+            --j;
+        }
+        matched[j] = key;
+    }
+
+    for (Setting* s : matched) {
+        show_setting(s->getGrblName(), s->getCompatibleValue(), NULL, out);
     }
 }
 Error report_normal_settings(const char* value, WebUI::AuthenticationLevel auth_level, WebUI::ESPResponseStream* out) {
     show_grbl_settings(out, GRBL, false);  // GRBL non-axis settings
     show_grbl_settings(out, GRBL, true);   // GRBL axis settings
     // Keep axis-specific homing pull-off visible in legacy $$ output.
-    show_setting("271", homing_pulloff_x->getCompatibleValue(), NULL, out);
-    show_setting("272", homing_pulloff_y->getCompatibleValue(), NULL, out);
-    show_setting("273", homing_pulloff_z->getCompatibleValue(), NULL, out);
+    // show_setting("271", homing_pulloff_x->getCompatibleValue(), NULL, out);
+    // show_setting("272", homing_pulloff_y->getCompatibleValue(), NULL, out);
+    // show_setting("273", homing_pulloff_z->getCompatibleValue(), NULL, out);
     return Error::Ok;
 }
 Error report_extended_settings(const char* value, WebUI::AuthenticationLevel auth_level, WebUI::ESPResponseStream* out) {
