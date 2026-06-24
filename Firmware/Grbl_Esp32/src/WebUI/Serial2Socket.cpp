@@ -30,6 +30,15 @@
 namespace WebUI {
     Serial_2_Socket Serial2Socket;
 
+    // TX-путь зовётся из нескольких задач (protocol loop через grbl_send,
+    // clientCheckTask из realtime-`?`), broadcastBIN не реентерабелен, а сам
+    // WebSocketsServer удаляется при выключении/рестарте Wi-Fi. Поэтому буфер,
+    // отправка и attach/detach сериализованы одним мьютексом. При заполнении
+    // буфера write() флашит сам (под локом) — большие ответы ($$ для вкладки
+    // настроек WebUI) не теряются. broadcastBIN из колбэков зовёт только
+    // grbl_send(CLIENT_SERIAL) -> Uart0, рекурсивного захвата нет.
+    static SemaphoreHandle_t s2s_tx_mux = xSemaphoreCreateMutex();
+
     Serial_2_Socket::Serial_2_Socket() {
         _web_socket   = NULL;
         _TXbufferSize = 0;
@@ -53,16 +62,20 @@ namespace WebUI {
 
     bool Serial_2_Socket::attachWS(WebSocketsServer* web_socket) {
         if (web_socket) {
+            xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
             _web_socket   = web_socket;
             _TXbufferSize = 0;
+            xSemaphoreGive(s2s_tx_mux);
             return true;
         }
         return false;
     }
 
     bool Serial_2_Socket::detachWS() {
-        _web_socket = NULL;
+        xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
+        _web_socket   = NULL;
         _TXbufferSize = 0;
+        xSemaphoreGive(s2s_tx_mux);
         return true;
     }
 
@@ -70,42 +83,33 @@ namespace WebUI {
 
     int Serial_2_Socket::available() { return _RXbufferSize; }
 
-    size_t Serial_2_Socket::write(uint8_t c) {
-        if (!_web_socket) {
-            return 0;
-        }
-        write(&c, 1);
-        return 1;
-    }
+    size_t Serial_2_Socket::write(uint8_t c) { return write(&c, 1); }
 
     size_t Serial_2_Socket::write(const uint8_t* buffer, size_t size) {
-        if ((buffer == NULL) || (!_web_socket)) {
-            if (buffer == NULL) {
-                log_i("[SOCKET]No buffer");
-            }
-            if (!_web_socket) {
-                log_i("[SOCKET]No socket");
-            }
+        if (buffer == NULL) {
+            log_i("[SOCKET]No buffer");
             return 0;
         }
 
 #    if defined(ENABLE_SERIAL2SOCKET_OUT)
+        xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
+        // Проверка указателя — под локом: detachWS() обнуляет его до того,
+        // как Web_Server::end() удалит сервер (иначе use-after-free).
+        if (!_web_socket) {
+            xSemaphoreGive(s2s_tx_mux);
+            log_i("[SOCKET]No socket");
+            return 0;
+        }
         if (_TXbufferSize == 0) {
             _lastflush = millis();
         }
-
-        //send full line
-        if (_TXbufferSize + size > TXBUFFERSIZE) {
-            flush();
+        for (size_t i = 0; i < size; i++) {
+            if (_TXbufferSize >= TXBUFFERSIZE) {
+                flush_locked();
+            }
+            _TXbuffer[_TXbufferSize++] = buffer[i];
         }
-
-        //need periodic check to force to flush in case of no end
-        for (int i = 0; i < size; i++) {
-            _TXbuffer[_TXbufferSize] = buffer[i];
-            _TXbufferSize++;
-        }
-        log_i("[SOCKET]buffer size %d", _TXbufferSize);
-        handle_flush();
+        xSemaphoreGive(s2s_tx_mux);
 #    endif
         return size;
     }
@@ -160,30 +164,26 @@ namespace WebUI {
     }
 
     void Serial_2_Socket::handle_flush() {
-        if (!_web_socket) {
-            _TXbufferSize = 0;
-            return;
-        }
-        if (_TXbufferSize > 0 && ((_TXbufferSize >= TXBUFFERSIZE) || ((millis() - _lastflush) > FLUSHTIMEOUT))) {
+        // Чтение без лока безвредно: точную проверку делает flush() под мьютексом.
+        // Переполнение сюда не доходит — write() флашит сам при заполнении.
+        if (_TXbufferSize > 0 && ((millis() - _lastflush) > FLUSHTIMEOUT)) {
             log_i("[SOCKET]need flush, buffer size %d", _TXbufferSize);
             flush();
         }
     }
+
     void Serial_2_Socket::flush(void) {
-        if (_TXbufferSize > 0) {
-            if (!_web_socket) {
-                _TXbufferSize = 0;
-                return;
-            }
-            log_i("[SOCKET]flush data, buffer size %d", _TXbufferSize);
+        xSemaphoreTake(s2s_tx_mux, portMAX_DELAY);
+        flush_locked();
+        xSemaphoreGive(s2s_tx_mux);
+    }
+
+    void Serial_2_Socket::flush_locked() {
+        if (_TXbufferSize && _web_socket) {
             _web_socket->broadcastBIN(_TXbuffer, _TXbufferSize);
-
-            //refresh timout
-            _lastflush = millis();
-
-            //reset buffer
-            _TXbufferSize = 0;
         }
+        _TXbufferSize = 0;
+        _lastflush    = millis();
     }
 
     Serial_2_Socket::~Serial_2_Socket() {

@@ -128,8 +128,7 @@ const int MAX_N_AXIS = 3;
 #define ENABLE_OTA                      /* enable OTA                                        */
 #define ENABLE_TELNET                   /* enable telnet                                     */
 #define ENABLE_TELNET_WELCOME_MSG       /* display welcome string when connect to telnet     */                           
-// #define ENABLE_MDNS                  /* enable mDNS discovery                             */   
-// #define ENABLE_MDNS                     /* enable mDNS discovery                             */   
+#define ENABLE_MDNS                     /* enable mDNS discovery                             */
 // #define ENABLE_NOTIFICATIONS         /* enable notifications                              */   
 
 //#define ENABLE_TELNET_OTHER_TASK

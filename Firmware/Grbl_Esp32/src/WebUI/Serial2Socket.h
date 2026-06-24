@@ -59,6 +59,8 @@ namespace WebUI {
         ~Serial_2_Socket();
 
     private:
+        void flush_locked();  // вызывать только под s2s_tx_mux
+
         uint32_t          _lastflush;
         WebSocketsServer* _web_socket;
 
