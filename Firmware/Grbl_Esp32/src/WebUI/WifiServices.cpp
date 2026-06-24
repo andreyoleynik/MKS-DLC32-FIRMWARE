@@ -101,8 +101,8 @@ namespace WebUI {
         ArduinoOTA.begin();
 #    endif
 #    ifdef ENABLE_MDNS
-        //mDNS only in STA mode to avoid extra heap pressure in AP/WebUI mode.
-        if (WiFi.getMode() == WIFI_STA) {
+        //mDNS работает и в STA, и в AP — http://<hostname>.local в обоих режимах (наша фича)
+        if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP) {
             //start mDns
             if (!MDNS.begin(h.c_str())) {
                 grbl_send(CLIENT_ALL, "[MSG:Cannot start mDNS]\r\n");

@@ -135,7 +135,7 @@ const int MAX_N_AXIS = 3;
 
 // WebUI <-> ядро GRBL по WebSocket. БЕЗ этих флагов вкладка настроек WebUI висит
 // #define ENABLE_WIFI_STARTUP_SCAN     /* run an async WiFi scan when services start         */
-// #define ENABLE_REMOTE_CLIENT         /* start outbound Remote_Client telnet bridge         */
+#define ENABLE_REMOTE_CLIENT            /* UDP-маячок обнаружения + outbound Remote_Client bridge (наша фича)         */
 #define WIFI_STA_RECONNECT_INTERVAL_MS   30000UL        /* soft reconnect pacing in milliseconds        */
 // вечно (issue #25): GRBL-команды ($$, jog, смена hostname) уходят в Serial2Socket,
 // но не читаются (IN) и ответы не уходят в сокет (OUT). Включено для рабочего WebUI.

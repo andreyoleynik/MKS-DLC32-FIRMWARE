@@ -116,7 +116,7 @@ namespace WebUI {
 
     private:
         static bool   ConnectSTA2AP();
-        static void   WiFiEvent(WiFiEvent_t event);
+        static void   WiFiEvent(arduino_event_id_t event, arduino_event_info_t info);
         static String _hostname;
         static bool   _events_registered;
     };

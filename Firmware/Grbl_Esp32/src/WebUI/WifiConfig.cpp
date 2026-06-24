@@ -206,14 +206,16 @@ namespace WebUI {
      * SYSTEM_EVENT_MAX
      */
 
-    void WiFiConfig::WiFiEvent(WiFiEvent_t event) {
+    void WiFiConfig::WiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
         switch (event) {
             case ARDUINO_EVENT_WIFI_STA_GOT_IP:
                 grbl_sendf(CLIENT_ALL, "[MSG:Connected with %s]\r\n", WiFi.localIP().toString().c_str());
                     mks_grbl.wifi_connect_status = true;
                 break;
             case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-                grbl_send(CLIENT_ALL, "[MSG:Disconnected]\r\n");
+                // reason-код (8=ASSOC_LEAVE, 15=4WAY_TIMEOUT/неверный пароль,
+                // 201=NO_AP_FOUND, 202=AUTH_FAIL, 205=CONNECTION_FAIL) — диагностика стабильности
+                grbl_sendf(CLIENT_ALL, "[MSG:Disconnected, reason %d]\r\n", (int)info.wifi_sta_disconnected.reason);
                     mks_grbl.wifi_connect_status = false;
                 break;
             default:
@@ -245,17 +247,20 @@ namespace WebUI {
     }
 
 
-#define WIFI_COUNT              40
+#define WIFI_COUNT              60   /* 60*500мс = 30с: ассоциация на band-steered роутерах бывает 5-25с */
 #define WIFI_DELAY_WAIT         500
 
     bool WiFiConfig::mks_ConnectSTA2AP() {
         uint8_t     count  = 0;
         wl_status_t status = WiFi.status();
-        while (status != WL_CONNECTED && count < 40) {
+        while (status != WL_CONNECTED && count < WIFI_COUNT) {
             switch (status) {
                 case WL_NO_SSID_AVAIL:
-                    return status == WL_CONNECTED;
-                break;
+                    // Сразу после WiFi.begin() скан ещё не нашёл AP — это норма,
+                    // продолжаем ждать до общего таймаута (count<40). Ранний выход
+                    // тут давал ложный AP-fallback при доступной сети (флакелость STA
+                    // усилилась под arduino-esp32 2.0.x). Ведём себя как ConnectSTA2AP.
+                    break;
                 case WL_CONNECT_FAILED:
 
                 break;
@@ -360,6 +365,10 @@ namespace WebUI {
             IPAddress ip(IP), mask(MK), gateway(GW);
             WiFi.config(ip, gateway, mask);
         }
+        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);     // скан всех каналов: надёжнее на band-steered/mesh
+        WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL); // брать сильнейший BSSID (лечит reason 201 NO_AP_FOUND)
+        WiFi.setSleep(false);         // отключить modem-sleep: меньше дропов/auth-таймаутов STA
+        WiFi.setAutoReconnect(true);  // ядро 2.0.x само реконнектит при обрыве (все reason-коды)
         if (WiFi.begin(SSID.c_str(), (password.length() > 0) ? password.c_str() : NULL)) {
             grbl_send(CLIENT_ALL, "\n[MSG:Client Started]\r\n");
             grbl_sendf(CLIENT_ALL, "[MSG:Connecting %s]\r\n", SSID.c_str());
@@ -407,6 +416,10 @@ namespace WebUI {
             IPAddress ip(IP), mask(MK), gateway(GW);
             WiFi.config(ip, gateway, mask);
         }
+        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);     // скан всех каналов: надёжнее на band-steered/mesh
+        WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL); // брать сильнейший BSSID (лечит reason 201 NO_AP_FOUND)
+        WiFi.setSleep(false);         // отключить modem-sleep: меньше дропов/auth-таймаутов STA
+        WiFi.setAutoReconnect(true);  // ядро 2.0.x само реконнектит при обрыве (все reason-коды)
         if (WiFi.begin(SSID.c_str(), (password.length() > 0) ? password.c_str() : NULL)) {
             return mks_ConnectSTA2AP();
         } else {
@@ -580,32 +593,44 @@ namespace WebUI {
     void WiFiConfig::handle() {
         //Services
         COMMANDS::wait(0);
-        // Ядро 1.0.6 само реконнектит не все причины обрыва (AUTH_FAIL и коды <200
-        // не покрыты обработчиком SYSTEM_EVENT_STA_DISCONNECTED), поэтому в STA
-        // периодически пинаем reconnect сами. handle() работает в clientCheckTask —
-        // пока StartSTA ведёт подключение из другой задачи (sta_connect_busy),
-        // retry запрещён, иначе конкурентные вызовы esp_wifi вешают задачу.
-        static uint32_t       sta_last_ok_or_retry      = 0;
-        static bool           sta_reconnect_warned      = false;
-        if (WiFi.getMode() == WIFI_STA) {
+        // Реконнект STA полностью на ядре 2.0.x (WiFi.setAutoReconnect(true) в StartSTA).
+        // handle() (clientCheckTask) больше НЕ зовёт WiFi.reconnect() — это убирает
+        // межзадачную гонку esp_wifi (clientCheckTask vs protocol-task), которая вешала
+        // плату, и черч из-за двойного reconnect (ядро + опрос). Только лог потери.
+        static bool sta_lost_warned = false;
+        if (WiFi.getMode() == WIFI_STA && !sta_connect_busy) {
+            if (WiFi.status() == WL_CONNECTED) {
+                sta_lost_warned = false;
+            } else if (!sta_lost_warned) {
+                grbl_send(CLIENT_SERIAL, "[MSG:WiFi STA lost, auto-reconnecting]\r\n");
+                sta_lost_warned = true;
+            }
+        }
+
+        // AP-fallback recovery: настроен STA, но при холодном старте не успели
+        // подключиться (роутер недоступен/медленная ассоциация) и ушли в свой AP.
+        // Раньше это был тупик — STA не пересматривался до перезагрузки/ручного
+        // reconnect с тача. Периодически (60с) пробуем STA снова, чтобы вернуться
+        // в домашнюю сеть, когда она появится. mks_StartSTA() берёт StaBusyGuard
+        // сам — межзадачной гонки esp_wifi не добавляем. Гейт по wifi_radio_mode==STA,
+        // чтобы НЕ сбивать пользователя, который намеренно выбрал AP.
+        static uint32_t last_sta_retry_ms = 0;
+        if (!sta_connect_busy && WiFi.getMode() == WIFI_AP && wifi_radio_mode->get() == ESP_WIFI_STA) {
             uint32_t now = millis();
-            wl_status_t status = WiFi.status();
-            if (sta_connect_busy || status == WL_CONNECTED) {
-                sta_last_ok_or_retry = now;
-                sta_reconnect_warned = false;
-            } else {
-                bool reconnect_needed = (status == WL_DISCONNECTED || status == WL_CONNECTION_LOST || status == WL_CONNECT_FAILED);
-                if (!reconnect_needed) {
-                    sta_last_ok_or_retry = now;
-                } else if (now - sta_last_ok_or_retry > WIFI_STA_RECONNECT_INTERVAL_MS) {
-                sta_last_ok_or_retry = now;
-                if (!sta_reconnect_warned) {
-                    grbl_send(CLIENT_SERIAL, "[MSG:WiFi STA lost, reconnecting]\r\n");
-                    sta_reconnect_warned = true;
-                }
-                WiFi.reconnect();
+            if (last_sta_retry_ms == 0) {
+                last_sta_retry_ms = now;
+            } else if ((now - last_sta_retry_ms) >= 60000UL) {
+                last_sta_retry_ms = now;
+                grbl_send(CLIENT_SERIAL, "[MSG:AP fallback active, retrying STA]\r\n");
+                if (mks_StartSTA()) {
+                    wifi_services.begin();
+                } else {
+                    StartAP();
+                    wifi_services.begin();
                 }
             }
+        } else {
+            last_sta_retry_ms = 0;
         }
         wifi_services.handle();
     }
