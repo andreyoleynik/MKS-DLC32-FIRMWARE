@@ -32,6 +32,19 @@ uint32_t                   sd_current_line_number;     // stores the most recent
 uint32_t                   sd_total_line_number;       // stores the total number of lines in the current file
 static char                comment[LINE_BUFFER_SIZE];  // Line to be executed. Zero-terminated.
 
+// Сериализация доступа к глобальному myFile: protocol-task (readFileLine во время
+// задания) и UI/тач-задача (sd_report_perc_complete / closeFile со «Стоп») трогают
+// один fs::File одновременно -> use-after-free / порча позиции -> краш / битый gcode.
+// RAII-лок под рекурсивным мьютексом сериализует все обращения. portMAX_DELAY безопасен:
+// критич. секции короткие, без ложного EOF и без реального зависания protocol-петли.
+static SemaphoreHandle_t   sd_file_mux = xSemaphoreCreateRecursiveMutex();
+namespace {
+    struct SdFileLock {
+        SdFileLock() { xSemaphoreTakeRecursive(sd_file_mux, portMAX_DELAY); }
+        ~SdFileLock() { xSemaphoreGiveRecursive(sd_file_mux); }
+    };
+}
+
 #define USE_HSPI_FOR_SD 1
 #ifdef USE_HSPI_FOR_SD
 SPIClass SPI_H(HSPI);
@@ -194,6 +207,7 @@ void mks_listDir(fs::FS& fs, const char* dirname, uint8_t levels) {
 }
 
 boolean openFile(fs::FS& fs, const char* path) {
+    SdFileLock _lk;
     myFile = fs.open(path);
     if (!myFile) {
         return false;
@@ -222,6 +236,7 @@ boolean openFile(fs::FS& fs, const char* path) {
 }
 
 boolean closeFile() {
+    SdFileLock _lk;
     if (!myFile) {
         return false;
     }
@@ -234,6 +249,7 @@ boolean closeFile() {
 }
 
 boolean setFilePos(uint32_t pos) {
+    SdFileLock _lk;
     if (!myFile) {
         return false;
     }
@@ -244,6 +260,7 @@ boolean setFilePos(uint32_t pos) {
 
 
 boolean mks_openFile(fs::FS& fs, const char* path) {
+    SdFileLock _lk;
     myFile = fs.open(path);
     if (!myFile) {
         return false;
@@ -259,6 +276,7 @@ boolean mks_openFile(fs::FS& fs, const char* path) {
   return true if a line is
 */
 boolean readFileLine(char* line, int maxlen) {
+    SdFileLock _lk;
     if (!myFile) {
         report_status_message(Error::FsFailedRead, SD_client);
         return false;
@@ -280,7 +298,7 @@ boolean readFileLine(char* line, int maxlen) {
 }
 
 boolean readFileBuff(uint8_t *buf, uint32_t size) {
-
+    SdFileLock _lk;
     if(!myFile) {
         report_status_message(Error::FsFailedRead, SD_client);
         return false;
@@ -293,6 +311,7 @@ boolean readFileBuff(uint8_t *buf, uint32_t size) {
 
 // return a percentage complete 50.5 = 50.5%
 float sd_report_perc_complete() {
+    SdFileLock _lk;
     if (!myFile) {
         return 0.0;
     }
