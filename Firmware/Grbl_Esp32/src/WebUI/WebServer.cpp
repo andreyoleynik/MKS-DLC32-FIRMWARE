@@ -594,6 +594,7 @@ namespace WebUI {
                 }
                 if (!Serial2Socket.push(scmd.c_str())) {
                     hasError = true;
+                    break;  // RX-кольцо переполнено: не «дырявить» поток дальше — клиент увидит Error и дошлёт остаток
                 }
 
                 lineStart = i + 1;

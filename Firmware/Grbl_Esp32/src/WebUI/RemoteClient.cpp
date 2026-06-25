@@ -95,6 +95,10 @@ namespace WebUI {
             return;
         }
 
+        if (!Telnet_Server::has_free_slot()) {  // нет свободного telnet-слота — не штурмуем сервер
+            return;                             // (анти-storm: иначе connect+HELLO+reject каждые 15с)
+        }
+
         String   addr(server);
         int      colon = addr.lastIndexOf(':');
         uint16_t port  = (colon > 0) ? addr.substring(colon + 1).toInt() : 0;

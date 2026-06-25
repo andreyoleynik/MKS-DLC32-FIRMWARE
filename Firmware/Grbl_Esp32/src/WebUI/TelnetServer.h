@@ -92,6 +92,7 @@ namespace WebUI {
         static void write(uint8_t client, const uint8_t* buffer, size_t size);
         static bool read(char* code, uint8_t* client);
         static bool attach_client(WiFiClient& client);
+        static bool has_free_slot();  // есть ли свободный telnet-слот (для исходящего remote-канала)
 
         static int get_rx_buffer_available(uint8_t client);
 
