@@ -263,9 +263,11 @@ namespace WebUI {
             switch (status) {
                 case WL_NO_SSID_AVAIL:
                     // Сразу после WiFi.begin() скан ещё не нашёл AP — это норма,
-                    // продолжаем ждать до общего таймаута (count<40). Ранний выход
-                    // тут давал ложный AP-fallback при доступной сети (флакелость STA
-                    // усилилась под arduino-esp32 2.0.x). Ведём себя как ConnectSTA2AP.
+                    // продолжаем ждать до общего таймаута (count < WIFI_COUNT = 60, ~30с).
+                    // Ранний выход тут давал ложный AP-fallback при доступной сети
+                    // (флакелость STA усилилась под arduino-esp32 2.0.x). Ведём себя как
+                    // ConnectSTA2AP. NB: зовётся ТОЛЬКО из boot (mks_setup) — на станке
+                    // без задания; clientCheckTask этот блокирующий цикл не исполняет.
                     break;
                 case WL_CONNECT_FAILED:
 
@@ -595,44 +597,37 @@ namespace WebUI {
     void WiFiConfig::handle() {
         //Services
         COMMANDS::wait(0);
-        // Реконнект STA полностью на ядре 2.0.x (WiFi.setAutoReconnect(true) в StartSTA).
-        // handle() (clientCheckTask) больше НЕ зовёт WiFi.reconnect() — это убирает
-        // межзадачную гонку esp_wifi (clientCheckTask vs protocol-task), которая вешала
-        // плату, и черч из-за двойного reconnect (ядро + опрос). Только лог потери.
-        static bool sta_lost_warned = false;
-        if (WiFi.getMode() == WIFI_STA && !sta_connect_busy) {
-            if (WiFi.status() == WL_CONNECTED) {
-                sta_lost_warned = false;
-            } else if (!sta_lost_warned) {
-                grbl_send(CLIENT_SERIAL, "[MSG:WiFi STA lost, auto-reconnecting]\r\n");
+        // Реконнект STA — на ядре 2.0.x (setAutoReconnect). handle() работает в
+        // clientCheckTask, который ЕДИНСТВЕННЫЙ обслуживает realtime-команды (feed-hold
+        // '!', reset 0x18, '?', cycle-start) и сетевые сервисы — поэтому здесь НЕЛЬЗЯ
+        // блокировать (иначе «Стоп»/feed-hold во время задания не отработают). Никаких
+        // блокирующих mks_StartSTA/ConnectSTA2AP/reconnect.
+        // Если настроен STA, но не подключены (в т.ч. ушли в свой AP при холодном старте
+        // или дроп связи) — раз в 60с АСИНХРОННО дёргаем WiFi.begin() как backstop к
+        // setAutoReconnect: он сам включает STA (AP остаётся → доступ оператора), association
+        // идёт в фоне, без блокировки clientCheckTask и без teardown сервисов. Гейт по
+        // wifi_radio_mode==STA — намеренный AP не трогаем.
+        static uint32_t last_sta_kick   = 0;
+        static bool     sta_lost_warned = false;
+        if (!sta_connect_busy && wifi_radio_mode && wifi_radio_mode->get() == ESP_WIFI_STA && WiFi.status() != WL_CONNECTED) {
+            uint32_t now = millis();
+            if (!sta_lost_warned) {
+                grbl_send(CLIENT_SERIAL, "[MSG:WiFi STA not connected, async retry]\r\n");
                 sta_lost_warned = true;
             }
-        }
-
-        // AP-fallback recovery: настроен STA, но при холодном старте не успели
-        // подключиться (роутер недоступен/медленная ассоциация) и ушли в свой AP.
-        // Раньше это был тупик — STA не пересматривался до перезагрузки/ручного
-        // reconnect с тача. Периодически (60с) пробуем STA снова, чтобы вернуться
-        // в домашнюю сеть, когда она появится. mks_StartSTA() берёт StaBusyGuard
-        // сам — межзадачной гонки esp_wifi не добавляем. Гейт по wifi_radio_mode==STA,
-        // чтобы НЕ сбивать пользователя, который намеренно выбрал AP.
-        static uint32_t last_sta_retry_ms = 0;
-        if (!sta_connect_busy && WiFi.getMode() == WIFI_AP && wifi_radio_mode->get() == ESP_WIFI_STA) {
-            uint32_t now = millis();
-            if (last_sta_retry_ms == 0) {
-                last_sta_retry_ms = now;
-            } else if ((now - last_sta_retry_ms) >= 60000UL) {
-                last_sta_retry_ms = now;
-                grbl_send(CLIENT_SERIAL, "[MSG:AP fallback active, retrying STA]\r\n");
-                if (mks_StartSTA()) {
-                    wifi_services.begin();
-                } else {
-                    StartAP();
-                    wifi_services.begin();
-                }
+            if (last_sta_kick == 0) {
+                last_sta_kick = now;
+            } else if ((now - last_sta_kick) >= 60000UL && wifi_sta_ssid && wifi_sta_password) {
+                last_sta_kick = now;
+                String ssid = wifi_sta_ssid->get();
+                String pw   = wifi_sta_password->get();
+                WiFi.setAutoReconnect(true);
+                WiFi.begin(ssid.length() ? ssid.c_str() : DEFAULT_STA_SSID,
+                           pw.length() ? pw.c_str() : NULL);  // async — НЕ блокирует clientCheckTask
             }
         } else {
-            last_sta_retry_ms = 0;
+            sta_lost_warned = false;
+            last_sta_kick   = 0;
         }
         wifi_services.handle();
     }

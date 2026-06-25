@@ -41,7 +41,10 @@ WebSocket-heartbeat, coredump, backup/restore настроек, экранные
 **WiFi-стабильность:**
 - Убран ложный AP-fallback (ранний выход на `WL_NO_SSID_AVAIL`), таймаут связи 20→30 c.
 - `setAutoReconnect(true)` + `setSleep(false)`; убрана межзадачная гонка `WiFi.reconnect()`.
-- **AP-fallback self-heal**: если настроен STA, но завис в своём AP — раз в 60 c пробуем STA.
+- **AP-fallback self-heal (НЕблокирующий)**: если настроен STA, но не подключены (в т.ч.
+  завис в своём AP) — раз в 60 c **асинхронно** дёргаем `WiFi.begin()` (без блокирующего
+  ожидания). Критично: `handle()` работает в `clientCheckTask`, который обслуживает realtime
+  feed-hold/reset/`?` — блокирующий вариант заморозил бы «Стоп» во время задания (поймано ревью).
 - Лог дисконнекта с reason-кодом и throttle (не флудит CNC/serial-поток при черче роутера).
 
 **Прочее:** `readFileLine` overflow на длинных gcode-строках; gpio_isr-ошибки на boot
