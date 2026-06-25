@@ -1,4 +1,8 @@
 #include "MKS_FREERTOS_TASK.h"
+#include "MKS_draw_print.h"
+#include "MKS_draw_tool.h"
+#include "../Probe.h"
+#include "MKS_draw_lvgl.h"
 
 #define DISP_TASK_STACK                 4096*2
 #define DISP_TASK_PRO                   2
@@ -15,6 +19,31 @@ TaskHandle_t frame_task_tcb = NULL;
 
 static void mks_page_data_updata(void);
 
+static lv_obj_t* probe_touch_indicator = NULL;
+static lv_style_t probe_touch_indicator_style;
+
+static void mks_probe_indicator_init(void) {
+    lv_style_copy(&probe_touch_indicator_style, &lv_style_plain);
+    probe_touch_indicator_style.body.main_color = LV_COLOR_MAKE(0x00, 0xFF, 0x00);
+    probe_touch_indicator_style.body.grad_color = LV_COLOR_MAKE(0x00, 0xFF, 0x00);
+    probe_touch_indicator_style.body.radius = 5;
+    probe_touch_indicator_style.body.border.width = 0;
+
+    probe_touch_indicator = lv_obj_create(lv_layer_top(), NULL);
+    lv_obj_set_size(probe_touch_indicator, 10, 10);
+    lv_obj_set_style(probe_touch_indicator, &probe_touch_indicator_style);
+    lv_obj_align(probe_touch_indicator, NULL, LV_ALIGN_IN_TOP_RIGHT, -5, 5);
+    lv_obj_set_click(probe_touch_indicator, false);
+    lv_obj_set_hidden(probe_touch_indicator, true);
+}
+
+static void mks_probe_indicator_update(void) {
+    if (probe_touch_indicator == NULL) {
+        return;
+    }
+    lv_obj_set_hidden(probe_touch_indicator, !probe_get_state());
+}
+
 IRAM_ATTR void lvgl_disp_task(void *parg) { 
 
 #if defined(USE_DelayUntil)
@@ -28,6 +57,7 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
     mks_lvgl_init();
 
     mks_global_style_init();
+    mks_probe_indicator_init();
 
     mks_draw_logo();
 
@@ -40,6 +70,7 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
 
         if(logo_flag == true) {
             lv_task_handler();
+            mks_probe_indicator_update();
             logo_flag_count++;
 
             if(logo_flag_count == 100) {
@@ -63,6 +94,7 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
         }else {
             lv_task_handler();
             mks_page_data_updata();
+            mks_probe_indicator_update();
             ts35_beep_handler();
         }
 
@@ -77,7 +109,38 @@ IRAM_ATTR void lvgl_disp_task(void *parg) {
 uint8_t count_updata = 0;
 uint8_t fram_count = 0;
 static void mks_page_data_updata(void) { 
+#ifdef ENABLE_SD_CARD
+    // If SD print started outside touch UI (e.g. WebUI), force switch in LVGL task.
+    if ((get_sd_state(false) == SDState::BusyPrinting) &&
+        (mks_ui_page.mks_ui_page != MKS_UI_Pring)) {
+        mks_ui_page.mks_ui_page = MKS_UI_PAGE_LOADING;
+        mks_ui_page.wait_count  = DEFAULT_UI_COUNT;
+        mks_lv_clean_ui();
+        mks_draw_print();
+        return;
+    }
+
+    // If SD print was stopped remotely while print page is open, return to ready page.
+    if ((mks_ui_page.mks_ui_page == MKS_UI_Pring) &&
+        (get_sd_state(false) != SDState::BusyPrinting)) {
+        mks_grbl.is_mks_ts35_flag = false;
+        mks_grbl.carve_times      = 0;
+        mks_ui_page.mks_ui_page   = MKS_UI_PAGE_LOADING;
+        mks_ui_page.wait_count    = DEFAULT_UI_COUNT;
+        mks_lv_clean_ui();
+        mks_draw_ready();
+        return;
+    }
+#endif
     
+    // Лимит-попап строим ТОЛЬКО в LVGL-задаче (protocol-task лишь ставит флаг) — иначе
+    // мутация дерева LVGL из двух задач рушит его (краш во время задания при лимите).
+    if (mks_grbl.pending_limit_popup != 0 && mks_ui_page.mks_ui_page != MKS_UI_TEST) {
+        uint8_t p = mks_grbl.pending_limit_popup;
+        mks_grbl.pending_limit_popup = 0;
+        draw_global_popup(p == 1 ? "Hard limit!" : "Soft limit!");  // popup_1_flag де-дупит
+    }
+
     if(mks_ui_page.mks_ui_page == MKS_UI_PAGE_LOADING) {
         /* Do not updata */
         return ;
@@ -98,9 +161,7 @@ static void mks_page_data_updata(void) {
 
         if((count_updata == 200) || (count_updata > 200) ) { // 200*5=1000ms = 1s
 
-            if(SD_ready_next == false) {
-                mks_print_data_updata();
-            } 
+            mks_print_data_updata();
             count_updata = 0;
         }
     }
@@ -191,6 +252,12 @@ static void mks_page_data_updata(void) {
             // 更新失败弹窗
             mks_draw_common_pupup_info("Error", "Update Fail", "Please Check mkscfg.txt or sdcard");
             mks_updata.updata_flag = UD_NONE;
+        }
+    }
+    else if (mks_ui_page.mks_ui_page == MKS_UI_Tool) {
+        if ((count_updata == 200) || (count_updata > 200)) {  // 200*5ms = 1s
+            mks_tool_heap_info_update();
+            count_updata = 0;
         }
     }
     count_updata++;

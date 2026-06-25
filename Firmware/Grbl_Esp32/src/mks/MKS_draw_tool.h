@@ -8,10 +8,10 @@ typedef enum {
     about_src1_x = 10,
     about_src1_y = 10,
     about_src1_x_size = 460,
-    about_src1_y_size = 90,
+    about_src1_y_size = 64,
 
     about_first_line_x = 10,
-    about_first_line_y = 150,
+    about_first_line_y = 120,
 
 }ABOUT_XY_POS_t;
 
@@ -35,6 +35,7 @@ typedef struct {
 // void lv_draw_tool(void);
 void mks_draw_tool(void);
 void mks_clear_tool(void);
+void mks_tool_heap_info_update(void);
 void light_img_change(uint8_t status);
 void mks_draw_pos_pupop(void);
 

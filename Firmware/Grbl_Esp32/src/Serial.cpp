@@ -198,9 +198,9 @@ void clientCheckTask(void* pvParameters) {
                     // выполнять ли строку со второго интерфейса при активной SD-печати,
                     // принимается на уровне готовой строки в Protocol.cpp
                     // (line_safe_during_sd_job): read-only запросы проходят, движение — нет.
-                    vTaskEnterCritical(&myMutex);
+                    vPortEnterCritical(&myMutex);
                     client_buffer[client].write(data);
-                    vTaskExitCritical(&myMutex);
+                    vPortExitCritical(&myMutex);
             }
         }  // if something available
         WebUI::COMMANDS::handle();
@@ -232,9 +232,9 @@ void client_reset_read_buffer(uint8_t client) {
 
 // Fetches the first byte in the client read buffer. Called by protocol loop.
 int client_read(uint8_t client) {
-    vTaskEnterCritical(&myMutex);
+    vPortEnterCritical(&myMutex);
     int data = client_buffer[client].read();
-    vTaskExitCritical(&myMutex);
+    vPortExitCritical(&myMutex);
     return data;
 }
 

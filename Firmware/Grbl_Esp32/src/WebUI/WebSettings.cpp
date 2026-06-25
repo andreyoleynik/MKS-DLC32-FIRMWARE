@@ -32,6 +32,12 @@
 #include "WebServer.h"
 #include <string.h>
 
+#ifdef TFT_LVGL_UI
+#include "../mks/MKS_draw_lvgl.h"
+#include "../mks/MKS_draw_print.h"
+#include "../mks/MKS_draw_ready.h"
+#endif
+
 namespace WebUI {
 
 #ifdef ENABLE_WIFI
@@ -49,10 +55,12 @@ namespace WebUI {
     IPaddrSetting* wifi_ap_ip;
 
     IntSetting* wifi_ap_channel;
+    EnumSetting* wifi_tx_power;
 
     StringSetting* wifi_hostname;
     EnumSetting*   http_enable;
     IntSetting*    http_port;
+    EnumSetting*   webui_secondary_enable;
     EnumSetting*   telnet_enable;
     IntSetting*    telnet_port;
 
@@ -65,6 +73,20 @@ namespace WebUI {
     enum_opt_t staModeOptions = {
         { "DHCP", DHCP_MODE },
         { "Static", STATIC_MODE },
+    };
+
+    enum_opt_t wifiTxPowerOptions = {
+        { "19.5 dBm", WIFI_POWER_19_5dBm },
+        { "19 dBm", WIFI_POWER_19dBm },
+        { "18.5 dBm", WIFI_POWER_18_5dBm },
+        { "17 dBm", WIFI_POWER_17dBm },
+        { "15 dBm", WIFI_POWER_15dBm },
+        { "13 dBm", WIFI_POWER_13dBm },
+        { "11 dBm", WIFI_POWER_11dBm },
+        { "8.5 dBm", WIFI_POWER_8_5dBm },
+        { "7 dBm", WIFI_POWER_7dBm },
+        { "5 dBm", WIFI_POWER_5dBm },
+        { "2 dBm", WIFI_POWER_2dBm },
     };
 #endif
 
@@ -667,20 +689,200 @@ namespace WebUI {
     }
 
     static Error listSettings(char* parameter, AuthenticationLevel auth_level) {  // ESP400
-        JSONencoder j(espresponse->client() != CLIENT_WEBUI);
-        j.begin();
-        j.begin_array("EEPROM");
+        webPrint("{\"EEPROM\":[");
+        bool     first        = true;
+        uint16_t webset_count = 0;
         for (Setting* js = Setting::List; js; js = js->next()) {
             if (js->getType() == WEBSET) {
-                js->addWebui(&j);
+                JSONencoder item(false);
+                js->addWebui(&item);
+                if (!first) {
+                    webPrint(",");
+                }
+                first = false;
+                webPrint(item.value());
+                if ((++webset_count & 0x0F) == 0) {
+                    COMMANDS::wait(0);
+                }
             }
         }
-        j.end_array();
-        webPrint(j.end());
+        webPrint("]}");
         return Error::Ok;
     }
 
 #ifdef ENABLE_SD_CARD
+#ifdef TFT_LVGL_UI
+    static void syncTs35PrintUiOnRemoteRun() {
+        mks_grbl.is_mks_ts35_flag = true;
+        if (mks_ui_page.mks_ui_page != MKS_UI_Pring) {
+            mks_lv_clean_ui();
+            mks_draw_print();
+        }
+    }
+
+    static void syncTs35ReadyUiOnRemoteStop() {
+        mks_grbl.is_mks_ts35_flag = false;
+        mks_grbl.carve_times = 0;
+        if (mks_ui_page.mks_ui_page != MKS_UI_Ready) {
+            mks_lv_clean_ui();
+            mks_draw_ready();
+        }
+    }
+#endif
+
+    static Error runSDFile(char* parameter, AuthenticationLevel auth_level);
+
+    static String normalizeSettingsPath(char* parameter) {
+        String path;
+        if (parameter) {
+            path = trim(parameter);
+        }
+        if (path.length() == 0) {
+            path = "/Backup/backup.txt";
+        }
+        if (path[0] != '/') {
+            path = "/" + path;
+        }
+        return path;
+    }
+
+    static Error backupSettingsToSD(char* parameter, AuthenticationLevel auth_level) {  // ESP223
+        String path = normalizeSettingsPath(parameter);
+
+        SDState state = get_sd_state(true);
+        if (state != SDState::Idle) {
+            webPrintln((state == SDState::NotPresent) ? "No SD card" : "Busy");
+            return (state == SDState::NotPresent) ? Error::FsFailedMount : Error::FsFailedBusy;
+        }
+
+        if (!SD.exists("/Settings")) {
+            SD.mkdir("/Settings");
+        }
+
+        if (SD.exists(path.c_str())) {
+            SD.remove(path.c_str());
+        }
+
+        File outFile = SD.open(path.c_str(), FILE_WRITE);
+        if (!outFile) {
+            webPrintln("Cannot open settings backup file");
+            SD.end();
+            return Error::FsFailedOpenFile;
+        }
+
+        uint16_t count = 0;
+        for (Setting* s = Setting::List; s; s = s->next()) {
+            type_t t = s->getType();
+            if (t != GRBL && t != EXTENDED && t != WEBSET) {
+                continue;
+            }
+
+            const char* value = s->getBackupValue();
+            if (!value) {
+                continue;
+            }
+
+            const char* key = s->getName();
+            if ((t == GRBL || t == EXTENDED) && s->getGrblName()) {
+                key = s->getGrblName();
+            }
+
+            outFile.print("$");
+            outFile.print(key);
+            outFile.print("=");
+            outFile.println(value);
+            ++count;
+
+            if ((count & 0x1F) == 0) {
+                COMMANDS::wait(0);
+            }
+        }
+
+        outFile.close();
+        SD.end();
+        webPrintln("Saved settings to ", path);
+        return Error::Ok;
+    }
+
+    static Error restoreSettingsFromSD(char* parameter, AuthenticationLevel auth_level) {  // ESP224
+        String path = normalizeSettingsPath(parameter);
+
+        if (sys.state == State::Cycle || sys.state == State::Jog || sys.state == State::Homing ||
+            sys.state == State::CheckMode || (sys.state == State::Hold && !sys.suspend.bit.holdComplete)) {
+            webPrintln("Busy");
+            return Error::IdleError;
+        }
+
+        SDState state = get_sd_state(true);
+        if (state != SDState::Idle) {
+            webPrintln((state == SDState::NotPresent) ? "No SD card" : "Busy");
+            return (state == SDState::NotPresent) ? Error::FsFailedMount : Error::FsFailedBusy;
+        }
+
+        File inFile = SD.open(path.c_str(), FILE_READ);
+        if (!inFile) {
+            webPrintln("Cannot open settings file");
+            SD.end();
+            return Error::FsFailedOpenFile;
+        }
+
+        uint32_t lineNumber = 0;
+        uint32_t applied    = 0;
+        uint32_t skipped    = 0;
+        uint8_t  client     = (espresponse) ? espresponse->client() : CLIENT_ALL;
+
+        while (inFile.available()) {
+            String line = inFile.readStringUntil('\n');
+            ++lineNumber;
+            line.trim();
+
+            // Strip UTF-8 BOM on first line if file was edited on PC tools.
+            if (lineNumber == 1 && line.length() >= 3 &&
+                (uint8_t)line[0] == 0xEF && (uint8_t)line[1] == 0xBB && (uint8_t)line[2] == 0xBF) {
+                line.remove(0, 3);
+                line.trim();
+            }
+
+            if (line.length() == 0 || line[0] == ';' || line[0] == '#') {
+                continue;
+            }
+
+            // Older backups may contain masked password placeholders that are not restorable.
+            if (line.endsWith("=******")) {
+                ++skipped;
+                continue;
+            }
+
+            char lineBuf[256];
+            if (line.length() >= sizeof(lineBuf)) {
+                ++skipped;
+                webPrintln("Skipped too long line: ", String(lineNumber));
+                continue;
+            }
+
+            strncpy(lineBuf, line.c_str(), sizeof(lineBuf) - 1);
+            lineBuf[sizeof(lineBuf) - 1] = '\0';
+
+            Error err = execute_line(lineBuf, client, auth_level);
+            if (err == Error::Ok) {
+                ++applied;
+            } else {
+                ++skipped;
+                webPrintln("Skipped line ", String(lineNumber) + " error:" + String((int)err));
+            }
+
+            if (((applied + skipped) & 0x1F) == 0) {
+                COMMANDS::wait(0);
+            }
+        }
+
+        inFile.close();
+        SD.end();
+        webPrintln("Restore done. Applied:", String(applied));
+        webPrintln("Skipped:", String(skipped));
+        return (applied > 0) ? Error::Ok : Error::InvalidValue;
+    }
+
     static Error openSDFile(char* parameter) {
         if (*parameter == '\0') {
             webPrintln("Missing file name!");
@@ -731,7 +933,8 @@ namespace WebUI {
             webPrintln("Alarm");
             return Error::IdleError;
         }
-        if (sys.state != State::Idle) {
+        if (sys.state == State::Cycle || sys.state == State::Jog || sys.state == State::Homing ||
+            sys.state == State::CheckMode || (sys.state == State::Hold && !sys.suspend.bit.holdComplete)) {
             webPrintln("Busy");
             return Error::IdleError;
         }
@@ -750,6 +953,31 @@ namespace WebUI {
         // execute the first line now; Protocol.cpp handles later ones when SD_ready_next
         report_status_message(execute_line(fileLine, SD_client, SD_auth_level), SD_client);
         report_realtime_status(SD_client);
+
+#ifdef TFT_LVGL_UI
+        syncTs35PrintUiOnRemoteRun();
+#endif
+        webPrintln("");
+        return Error::Ok;
+    }
+
+    static Error stopSDFile(char* parameter, AuthenticationLevel auth_level) {  // ESP222
+        SDState state = get_sd_state(false);
+        if (state != SDState::BusyPrinting) {
+            webPrintln("No active SD print");
+            return Error::FsFailedBusy;
+        }
+
+        mc_reset();
+        // Ensure the SD stream is fully released so next run/upload can reopen the card.
+        closeFile();
+        sys_rt_f_override = FeedOverride::Default;
+        sys_rt_r_override = RapidOverride::Default;
+        sys_rt_s_override = SpindleSpeedOverride::Default;
+
+#ifdef TFT_LVGL_UI
+        syncTs35ReadyUiOnRemoteStop();
+#endif
         webPrintln("");
         return Error::Ok;
     }
@@ -833,7 +1061,7 @@ namespace WebUI {
         while (file) {
             if (file.isDirectory()) {
                 if (levels) {
-                    listDirLocalFS(fs, file.name(), levels - 1, client);
+                    listDirLocalFS(fs, file.path(), levels - 1, client);
                 }
             } else {
                 grbl_sendf(CLIENT_ALL, "[FILE:%s|SIZE:%d]\r\n", file.name(), file.size());
@@ -861,7 +1089,7 @@ namespace WebUI {
             tailName             = tailName ? tailName + 1 : file.name();
             if (file.isDirectory() && levels) {
                 j->begin_array(tailName);
-                listDirJSON(fs, file.name(), levels - 1, j);
+                listDirJSON(fs, file.path(), levels - 1, j);
                 j->end_array();
             } else {
                 j->begin_object();
@@ -1091,6 +1319,11 @@ namespace WebUI {
 #ifdef ENABLE_SD_CARD
         new WebCommand("path", WEBCMD, WU, "ESP221", "SD/Show", showSDFile);
         new WebCommand("path", WEBCMD, WU, "ESP220", "SD/Run", runSDFile);
+    new WebCommand(NULL, WEBCMD, WU, "ESP222", "SD/Stop", stopSDFile, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "ESP223", "SD/SettingsBackup", backupSettingsToSD, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "ESP224", "SD/SettingsRestore", restoreSettingsFromSD, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "BACKUP", "Settings/BackupToSD", backupSettingsToSD, anyState);
+    new WebCommand("path(optional)", WEBCMD, WA, "RESTORE", "Settings/RestoreFromSD", restoreSettingsFromSD, anyState);
         new WebCommand("file_or_directory_path", WEBCMD, WU, "ESP215", "SD/Delete", deleteSDObject);
         new WebCommand(NULL, WEBCMD, WU, "ESP210", "SD/List", listSDFiles);
 #endif
@@ -1184,6 +1417,8 @@ namespace WebUI {
         http_port =
             new IntSetting("HTTP Port", WEBSET, WA, "ESP121", "Http/Port", DEFAULT_WEBSERVER_PORT, MIN_HTTP_PORT, MAX_HTTP_PORT, NULL);
         http_enable   = new EnumSetting("HTTP Enable", WEBSET, WA, "ESP120", "Http/Enable", DEFAULT_HTTP_STATE, &onoffOptions, NULL);
+        webui_secondary_enable =
+            new EnumSetting("Allow second WebUI", WEBSET, WA, "ESP122", "Http/SecondWebUI", 0, &onoffOptions, NULL);
         wifi_hostname = new StringSetting("Hostname",
                                           WEBSET,
                                           WA,
@@ -1193,6 +1428,14 @@ namespace WebUI {
                                           MIN_HOSTNAME_LENGTH,
                                           MAX_HOSTNAME_LENGTH,
                                           (bool (*)(char*))WiFiConfig::isHostnameValid);
+        wifi_tx_power = new EnumSetting("WiFi TX Power",
+                                        WEBSET,
+                                        WA,
+                                        "ESP113",
+                                        "System/TxPower",
+                                        DEFAULT_WIFI_TX_POWER,
+                                        &wifiTxPowerOptions,
+                                        NULL);
         wifi_ap_channel =
             new IntSetting("AP Channel", WEBSET, WA, "ESP108", "AP/Channel", DEFAULT_AP_CHANNEL, MIN_CHANNEL, MAX_CHANNEL, NULL);
         wifi_ap_ip = new IPaddrSetting("AP Static IP", WEBSET, WA, "ESP107", "AP/IP", DEFAULT_AP_IP, NULL);

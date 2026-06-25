@@ -1,6 +1,10 @@
 #include "Grbl.h"
 #include <map>
 #include "Regex.h"
+#include <esp_partition.h>
+#if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+#    include <esp_core_dump.h>
+#endif
 
 #ifdef ENABLE_TELNET
     #include "WebUI/TelnetServer.h"
@@ -134,6 +138,10 @@ void show_grbl_settings(WebUI::ESPResponseStream* out, type_t type, bool wantAxi
 Error report_normal_settings(const char* value, WebUI::AuthenticationLevel auth_level, WebUI::ESPResponseStream* out) {
     show_grbl_settings(out, GRBL, false);  // GRBL non-axis settings
     show_grbl_settings(out, GRBL, true);   // GRBL axis settings
+    // Keep axis-specific homing pull-off visible in legacy $$ output.
+    show_setting("271", homing_pulloff_x->getCompatibleValue(), NULL, out);
+    show_setting("272", homing_pulloff_y->getCompatibleValue(), NULL, out);
+    show_setting("273", homing_pulloff_z->getCompatibleValue(), NULL, out);
     return Error::Ok;
 }
 Error report_extended_settings(const char* value, WebUI::AuthenticationLevel auth_level, WebUI::ESPResponseStream* out) {
@@ -604,10 +612,109 @@ void print_esp_info(uint8_t client) {
         case ESP_RST_SDIO:
             grbl_sendf(client, "Reset over SDIO\r\n");
             break;
+#ifdef ESP_RST_PANIC
+        case ESP_RST_PANIC:
+            grbl_sendf(client, "Exception/Panic reset\r\n");
+            break;
+#endif
+#ifdef ESP_RST_INT_WDT
+        case ESP_RST_INT_WDT:
+            grbl_sendf(client, "Interrupt watchdog reset\r\n");
+            break;
+#endif
+#ifdef ESP_RST_TASK_WDT
+        case ESP_RST_TASK_WDT:
+            grbl_sendf(client, "Task watchdog reset\r\n");
+            break;
+#endif
+        default:
+            grbl_sendf(client, "Reset reason: unknown enum value\r\n");
+            break;
     }
 
     grbl_sendf(client, "Reset reason num: %d\r\n", reason);
-    grbl_sendf(client, "Heap: %d\r\n", ESP.getFreeHeap());
+    grbl_sendf(client, "Heap free: %u\r\n", (unsigned)ESP.getFreeHeap());
+    grbl_sendf(client, "Heap min free: %u\r\n", (unsigned)xPortGetMinimumEverFreeHeapSize());
+}
+
+void print_last_reset_reason(uint8_t client) {
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char*        text   = "Unknown";
+    switch (reason) {
+        case ESP_RST_UNKNOWN:
+            text = "Unknown";
+            break;
+        case ESP_RST_POWERON:
+            text = "Power-on";
+            break;
+        case ESP_RST_EXT:
+            text = "External pin";
+            break;
+        case ESP_RST_SW:
+            text = "Software";
+            break;
+        case ESP_RST_WDT:
+            text = "Watchdog";
+            break;
+        case ESP_RST_DEEPSLEEP:
+            text = "Deep sleep";
+            break;
+        case ESP_RST_BROWNOUT:
+            text = "Brownout";
+            break;
+        case ESP_RST_SDIO:
+            text = "SDIO";
+            break;
+#ifdef ESP_RST_PANIC
+        case ESP_RST_PANIC:
+            text = "Panic/Crash";
+            break;
+#endif
+#ifdef ESP_RST_INT_WDT
+        case ESP_RST_INT_WDT:
+            text = "Interrupt watchdog";
+            break;
+#endif
+#ifdef ESP_RST_TASK_WDT
+        case ESP_RST_TASK_WDT:
+            text = "Task watchdog";
+            break;
+#endif
+    }
+    grbl_sendf(client, "Last reset: %s (%d)\r\n", text, (int)reason);
+}
+
+static void print_coredump_status(uint8_t client) {
+    size_t    addr = 0;
+    size_t    size = 0;
+    esp_err_t err  = ESP_ERR_NOT_SUPPORTED;
+    bool      api_available = false;
+#if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+    api_available = true;
+    err           = esp_core_dump_image_get(&addr, &size);
+#endif
+    const esp_partition_t* core_part =
+        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+
+#if defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH)
+    grbl_sendf(client, "CoreDump configured: FLASH\r\n");
+#else
+    grbl_sendf(client, "CoreDump configured: disabled/unknown in this build\r\n");
+#endif
+    grbl_sendf(client, "CoreDump API available: %s\r\n", api_available ? "yes" : "no");
+
+    if (core_part) {
+        grbl_sendf(client, "CoreDump partition: 0x%08x size 0x%08x\r\n", (unsigned)core_part->address, (unsigned)core_part->size);
+    } else {
+        grbl_sendf(client, "CoreDump partition: not found\r\n");
+    }
+
+    if ((err == ESP_OK) && (size > 0)) {
+        grbl_sendf(client, "CoreDump image: present addr=0x%08x size=%u\r\n", (unsigned)addr, (unsigned)size);
+        grbl_sendf(client, "HTTP fetch: /coredump/info and /coredump.bin\r\n");
+    } else {
+        grbl_sendf(client, "CoreDump image: not present (err=%d)\r\n", (int)err);
+    }
 }
 
 Error system_execute_line(char* line, WebUI::ESPResponseStream* out, WebUI::AuthenticationLevel auth_level) {
@@ -628,6 +735,16 @@ Error system_execute_line(char* line, WebUI::ESPResponseStream* out, WebUI::Auth
     else if (strcmp("INFO", line + 1) == 0) 
     {
         print_esp_info(out->client());
+        return Error::Ok;
+    }
+    else if ((strcmp("LASTRESET", line + 1) == 0) || (strcmp("RESETREASON", line + 1) == 0)) 
+    {
+        print_last_reset_reason(out->client());
+        return Error::Ok;
+    }
+    else if ((strcmp("COREDUMP", line + 1) == 0) || (strcmp("COREDUMPINFO", line + 1) == 0))
+    {
+        print_coredump_status(out->client());
         return Error::Ok;
     }
     else if (*line++ == '[') {  // [ESPxxx] form

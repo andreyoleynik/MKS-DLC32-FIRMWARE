@@ -15,7 +15,7 @@
 
 namespace WebUI {
     static const uint32_t RETRY_INTERVAL_MS  = 15000;  // пауза между попытками подключения
-    static const int32_t  CONNECT_TIMEOUT_MS = 2000;
+    static const int32_t  CONNECT_TIMEOUT_MS = 1000;  // 1с: меньше столл clientCheckTask при недоступном сервере
     static const uint16_t DISCOVERY_PORT     = 33333;  // UDP-маячок, пока сервер не задан
     static const uint32_t BEACON_INTERVAL_MS = 5000;
 
@@ -65,13 +65,18 @@ namespace WebUI {
         }
 
         const char* server = remote_server_address->get();
-        if (*server == '\0') {  // адрес не задан — маячим, чтобы сервер нашёл плату
+        if (*server == '\0') {  // адрес очищен — назад в режим обнаружения (маяк)
+            if (_wasConnected) {  // оборвать живой исходящий канал перед маяком
+                _wasConnected = false;
+                _remoteClient.stop();
+                grbl_send(CLIENT_ALL, "[MSG:REMOTE Disconnected]\r\n");
+            }
             send_discovery_beacon();
             return;
         }
 
-        if (_remoteClient.connected()) {  // данные ходят через telnet-слот
-            return;
+        if (WiFi.isConnected() && _remoteClient.connected()) {  // канал жив только при живом STA;
+            return;                                             // иначе падаем в teardown ниже
         }
 
         if (_wasConnected) {
@@ -90,6 +95,10 @@ namespace WebUI {
             return;
         }
 
+        if (!Telnet_Server::has_free_slot()) {  // нет свободного telnet-слота — не штурмуем сервер
+            return;                             // (анти-storm: иначе connect+HELLO+reject каждые 15с)
+        }
+
         String   addr(server);
         int      colon = addr.lastIndexOf(':');
         uint16_t port  = (colon > 0) ? addr.substring(colon + 1).toInt() : 0;
@@ -99,7 +108,14 @@ namespace WebUI {
         }
         String host = addr.substring(0, colon);
 
-        if (!_remoteClient.connect(host.c_str(), port, CONNECT_TIMEOUT_MS)) {
+        IPAddress serverIp;
+        bool      connected;
+        if (serverIp.fromString(host)) {
+            connected = _remoteClient.connect(serverIp, port, CONNECT_TIMEOUT_MS);  // IP -> без DNS-столла
+        } else {
+            connected = _remoteClient.connect(host.c_str(), port, CONNECT_TIMEOUT_MS);
+        }
+        if (!connected) {
             return;  // тихий повтор через RETRY_INTERVAL_MS
         }
 

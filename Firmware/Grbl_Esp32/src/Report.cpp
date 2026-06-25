@@ -70,11 +70,12 @@ void grbl_sendf(uint8_t client, const char* format, ...) {
     va_list copy;
     va_start(arg, format);
     va_copy(copy, arg);
-    size_t len = vsnprintf(NULL, 0, format, arg);
+    size_t len = vsnprintf(NULL, 0, format, copy);
     va_end(copy);
     if (len >= sizeof(loc_buf)) {
         temp = new char[len + 1];
         if (temp == NULL) {
+            va_end(arg);
             return;
         }
     }
@@ -103,11 +104,12 @@ void grbl_msg_sendf(uint8_t client, MsgLevel level, const char* format, ...) {
     va_list copy;
     va_start(arg, format);
     va_copy(copy, arg);
-    size_t len = vsnprintf(NULL, 0, format, arg);
+    size_t len = vsnprintf(NULL, 0, format, copy);
     va_end(copy);
     if (len >= sizeof(loc_buf)) {
         temp = new char[len + 1];
         if (temp == NULL) {
+            va_end(arg);
             return;
         }
     }
@@ -133,11 +135,12 @@ void grbl_notifyf(const char* title, const char* format, ...) {
     va_list copy;
     va_start(arg, format);
     va_copy(copy, arg);
-    size_t len = vsnprintf(NULL, 0, format, arg);
+    size_t len = vsnprintf(NULL, 0, format, copy);
     va_end(copy);
     if (len >= sizeof(loc_buf)) {
         temp = new char[len + 1];
         if (temp == NULL) {
+            va_end(arg);
             return;
         }
     }
@@ -292,7 +295,7 @@ void report_init_message(uint8_t client) {
 
 // Grbl help message
 void report_grbl_help(uint8_t client) {
-    grbl_send(client, "[HLP:$$ $+ $# $S $L $G $I $N $x=val $Nx=line $J=line $SLP $C $X $H $F $E=err ~ ! ? ctrl-x]\r\n");
+    grbl_send(client, "[HLP:$$ $+ $# $S $L $G $I $N $x=val $Nx=line $J=line $SLP $C $X $F $E=err $LASTRESET $INFO ~ ! ? ctrl-x]\r\n");
 }
 
 // Prints current probe parameters. Upon a probe command, these parameters are updated upon a
@@ -582,7 +585,7 @@ void report_echo_line_received(char* line, uint8_t client) {
 // requires as it minimizes the computational overhead and allows grbl to keep running smoothly,
 // especially during g-code programs with fast, short line segments and high frequency reports (5-20Hz).
 void report_realtime_status(uint8_t client) {
-    char status[244];
+    char status[384];
     char temp[MAX_N_AXIS * 20];
 
     strcpy(status, "<");
@@ -778,7 +781,7 @@ void report_realtime_status(uint8_t client) {
     }
 #endif
 #ifdef REPORT_HEAP
-    sprintf(temp, "|Heap:%d", esp.getHeapSize());
+    sprintf(temp, "|Heap:%u,%u", (unsigned)ESP.getFreeHeap(), (unsigned)xPortGetMinimumEverFreeHeapSize());
     strcat(status, temp);
 #endif
     // mks fix

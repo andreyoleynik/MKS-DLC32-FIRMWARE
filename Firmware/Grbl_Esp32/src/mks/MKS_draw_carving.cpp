@@ -45,6 +45,11 @@ lv_obj_t* file_7;
 lv_obj_t* file_list[8];
 lv_obj_t* Label_file_list[8];
 
+static lv_style_t list_btn_style;
+static lv_style_t list_btn_press_style;
+static lv_style_t list_btn_label_style;
+static bool list_btn_style_inited = false;
+
 /* Label */
 lv_obj_t* Label_file_0;
 lv_obj_t* Label_file_1;
@@ -289,23 +294,80 @@ static void event_handler_file7(lv_obj_t* obj, lv_event_t event) {
 	}
 }
 
+static lv_event_cb_t get_file_event_cb(uint8_t index) {
+	switch(index) {
+		case 0: return event_handler_file0;
+		case 1: return event_handler_file1;
+		case 2: return event_handler_file2;
+		case 3: return event_handler_file3;
+		case 4: return event_handler_file4;
+		case 5: return event_handler_file5;
+		case 6: return event_handler_file6;
+		case 7: return event_handler_file7;
+		default: return event_handler_file0;
+	}
+}
+
+static void ensure_list_button_style(void) {
+	if(list_btn_style_inited) {
+		return;
+	}
+
+	lv_style_copy(&list_btn_style, &lv_style_scr);
+	list_btn_style.body.main_color = LV_COLOR_MAKE(0x2B, 0x32, 0x48);
+	list_btn_style.body.grad_color = LV_COLOR_MAKE(0x2B, 0x32, 0x48);
+	list_btn_style.body.opa = LV_OPA_COVER;
+	list_btn_style.text.color = LV_COLOR_WHITE;
+	list_btn_style.body.radius = 6;
+
+	lv_style_copy(&list_btn_press_style, &lv_style_scr);
+	list_btn_press_style.body.main_color = LV_COLOR_MAKE(0x4B, 0x56, 0x78);
+	list_btn_press_style.body.grad_color = LV_COLOR_MAKE(0x4B, 0x56, 0x78);
+	list_btn_press_style.body.opa = LV_OPA_COVER;
+	list_btn_press_style.text.color = LV_COLOR_WHITE;
+	list_btn_press_style.body.radius = 6;
+
+	lv_style_copy(&list_btn_label_style, &lv_style_plain);
+	list_btn_label_style.text.color = LV_COLOR_WHITE;
+	list_btn_label_style.text.font = &lv_font_roboto_16;
+
+	list_btn_style_inited = true;
+}
+
 
 void mks_draw_craving(void) {
 
 	SDState state = get_sd_state(true);
 
 	mks_global.mks_src_1 = lv_obj_create(mks_global.mks_src, NULL);
-	lv_obj_set_size(mks_global.mks_src_1 ,caving_src1_size_x, caving_src1_size_y);
-	lv_obj_set_pos(mks_global.mks_src_1, caving_src1_x, caving_src1_y);
-	lv_obj_set_style(mks_global.mks_src_1, &mks_global.mks_src_1_style);
 
-	up = lv_imgbtn_creat_mks(mks_global.mks_src_1, up, &png_previous_pre, &Previous, LV_ALIGN_IN_RIGHT_MID, caving_up_x, caving_up_y, event_handler_up);
-	next = lv_imgbtn_creat_mks(mks_global.mks_src_1, next, &png_next_pre, &Next, LV_ALIGN_IN_RIGHT_MID, caving_next_x, caving_next_y, event_handler_next);
-	Cback = lv_imgbtn_creat_mks(mks_global.mks_src_1, Cback, &png_back_pre, &back, LV_ALIGN_IN_LEFT_MID, 10, -15, event_handler_cback);
+	if(sculpture_list_mode->get()) {
+		// --- List mode: vertical left panel ---
+		lv_obj_set_size(mks_global.mks_src_1, caving_src1_size_x, caving_src1_size_y);
+		lv_obj_set_pos(mks_global.mks_src_1, caving_src1_x, caving_src1_y);
+		lv_obj_set_style(mks_global.mks_src_1, &mks_global.mks_src_1_style);
 
-	label_for_imgbtn_name(mks_global.mks_src_1, label_up, up, 0, 0, "Up");
-	label_for_imgbtn_name(mks_global.mks_src_1, label_next, next, 0, 0, "Next");
-	label_for_imgbtn_name(mks_global.mks_src_1, label_Cback, Cback, 0, 0, "Back");
+		Cback = lv_imgbtn_creat_mks(mks_global.mks_src_1, Cback, &png_back_pre, &back, LV_ALIGN_IN_TOP_MID, 0, 12, event_handler_cback);
+		up    = lv_imgbtn_creat_mks(mks_global.mks_src_1, up,    &png_previous_pre, &Previous, LV_ALIGN_IN_BOTTOM_MID, caving_up_x,   caving_up_y,   event_handler_up);
+		next  = lv_imgbtn_creat_mks(mks_global.mks_src_1, next,  &png_next_pre,     &Next,     LV_ALIGN_IN_BOTTOM_MID, caving_next_x, caving_next_y, event_handler_next);
+
+		label_Cback = label_for_imgbtn_name(mks_global.mks_src_1, label_Cback, Cback, 0, 0, "Back");
+		label_up    = label_for_imgbtn_name(mks_global.mks_src_1, label_up,    up,    0, 0, "Up");
+		label_next  = label_for_imgbtn_name(mks_global.mks_src_1, label_next,  next,  0, 0, "Next");
+	} else {
+		// --- Icon mode: horizontal top panel (original layout) ---
+		lv_obj_set_size(mks_global.mks_src_1, 460, 90);
+		lv_obj_set_pos(mks_global.mks_src_1, caving_src1_x, caving_src1_y);
+		lv_obj_set_style(mks_global.mks_src_1, &mks_global.mks_src_1_style);
+
+		up    = lv_imgbtn_creat_mks(mks_global.mks_src_1, up,    &png_previous_pre, &Previous, LV_ALIGN_IN_RIGHT_MID, -120, -15, event_handler_up);
+		next  = lv_imgbtn_creat_mks(mks_global.mks_src_1, next,  &png_next_pre,     &Next,     LV_ALIGN_IN_RIGHT_MID,  -30, -15, event_handler_next);
+		Cback = lv_imgbtn_creat_mks(mks_global.mks_src_1, Cback, &png_back_pre,     &back,     LV_ALIGN_IN_LEFT_MID,    10, -15, event_handler_cback);
+
+		label_for_imgbtn_name(mks_global.mks_src_1, label_up,    up,    0, 0, "Up");
+		label_for_imgbtn_name(mks_global.mks_src_1, label_next,  next,  0, 0, "Next");
+		label_for_imgbtn_name(mks_global.mks_src_1, label_Cback, Cback, 0, 0, "Back");
+	}
 
 	// label_Cback = mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src_1, label_Cback, caving_back_x,caving_back_y, "Back", 60);
 	// label_up = mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src_1, label_up, caving_up_x+20, caving_up_y+70, "UP", 60);
@@ -332,91 +394,43 @@ void mks_draw_craving(void) {
 }
 
 void draw_filexx(uint8_t num, char *name) {
+	char filename_display[MKS_FILE_NAME_LENGTH];
+	lv_event_cb_t event_cb = get_file_event_cb(num);
 
-	if(name[0] == '/') name[0] = ' ';
+	memset(filename_display, 0, sizeof(filename_display));
+	strncpy(filename_display, name, MKS_FILE_NAME_LENGTH - 1);
+	if(filename_display[0] == '/') filename_display[0] = ' ';
+
+	if(sculpture_list_mode->get()) {
+		ensure_list_button_style();
+		const lv_coord_t row_h = 34;
+		const lv_coord_t row_y_start = 10;
+
+		file_list[num] = mks_lv_btn_set(mks_global.mks_src, file_list[num], 388, row_h, 88, row_y_start + (num * (row_h + 2)), event_cb);
+		lv_btn_set_style(file_list[num], LV_BTN_STYLE_REL, &list_btn_style);
+		lv_btn_set_style(file_list[num], LV_BTN_STYLE_PR, &list_btn_press_style);
+		Label_file_list[num] = mks_lvgl_long_sroll_label_with_wight_set_center(file_list[num], Label_file_list[num], 0, 0, filename_display, 360);
+		lv_obj_set_style(Label_file_list[num], &list_btn_label_style);
+		return;
+	}
+
+	const lv_coord_t x = caving_first_file_x + ((num % 4) * 120);
+	const lv_coord_t y = caving_first_file_y + ((num / 4) * 105);
+	const lv_coord_t label_x = caving_first_file_label_x + ((num % 4) * 120);
+	const lv_coord_t label_y = caving_first_file_label_y + ((num / 4) * 105);
+
+	file_list[num] = lv_imgbtn_creat_mks(mks_global.mks_src, file_list[num], &file, &file, LV_ALIGN_CENTER, x, y, event_cb);
+	Label_file_list[num] = label_for_file(mks_global.mks_src, Label_file_list[num], label_x, label_y, filename_display, caving_file_name_show);
 
 	switch(num) {
-		case 0:
-		file_0 = lv_imgbtn_creat_mks(mks_global.mks_src, file_0, &file, &file, LV_ALIGN_CENTER, caving_first_file_x, caving_first_file_y, event_handler_file0);
-		Label_file_0 = label_for_file(mks_global.mks_src, Label_file_0, 
-																	caving_first_file_label_x, 
-																	caving_first_file_label_y, 
-																	name,
-																	caving_file_name_show);
-		break;
-
-		case 1:
-		file_1 = lv_imgbtn_creat_mks(mks_global.mks_src, file_1, &file, &file, LV_ALIGN_CENTER, caving_first_file_x + 120, caving_first_file_y, event_handler_file1);
-		Label_file_1 = label_for_file(mks_global.mks_src, 
-										Label_file_1, 
-										caving_first_file_label_x + 120, 
-										caving_first_file_label_y, 
-										name,
-										caving_file_name_show);
-		break;
-		
-		case 2:
-		file_2 = lv_imgbtn_creat_mks(mks_global.mks_src, file_0, &file, &file, LV_ALIGN_CENTER, caving_first_file_x + 240, caving_first_file_y, event_handler_file2);
-		Label_file_2 = label_for_file(mks_global.mks_src, 
-										Label_file_2, 
-										caving_first_file_label_x + 240, 
-										caving_first_file_label_y, 
-										name,
-										caving_file_name_show);
-		break;
-
-		case 3:
-		file_3 = lv_imgbtn_creat_mks(mks_global.mks_src, file_3, &file, &file, LV_ALIGN_CENTER, caving_first_file_x + 360, caving_first_file_y, event_handler_file3);
-		Label_file_3 = label_for_file(mks_global.mks_src, 
-			Label_file_3, 
-			caving_first_file_label_x + 360, 
-			caving_first_file_label_y, 
-			name,
-			caving_file_name_show);
-		break;
-
-		case 4:
-		file_4 = lv_imgbtn_creat_mks(mks_global.mks_src, file_4, &file, &file, LV_ALIGN_CENTER, caving_first_file_x, caving_first_file_y + 105, event_handler_file4);
-		Label_file_4 = label_for_file(mks_global.mks_src, 
-			Label_file_4, 
-			caving_first_file_label_x, 
-			caving_first_file_label_y + 105, 
-			name,
-			caving_file_name_show);
-		break;
-
-		case 5:
-		file_5 = lv_imgbtn_creat_mks(mks_global.mks_src, file_5, &file, &file, LV_ALIGN_CENTER, caving_first_file_x + 120, caving_first_file_y + 105, event_handler_file5);
-		Label_file_5 = label_for_file(mks_global.mks_src, 
-				Label_file_5, 
-				caving_first_file_label_x + 120, 
-				caving_first_file_label_y + 105, 
-				// mks_file_list.filename_str[5], 
-				name,
-				caving_file_name_show);
-		break;
-
-		case 6:
-		file_6 = lv_imgbtn_creat_mks(mks_global.mks_src, file_6, &file, &file, LV_ALIGN_CENTER, caving_first_file_x + 240, caving_first_file_y + 105, event_handler_file6);
-		Label_file_6 = label_for_file(mks_global.mks_src, 
-				Label_file_6, 
-				caving_first_file_label_x + 240, 
-				caving_first_file_label_y + 105, 
-				// mks_file_list.filename_str[6], 
-				name,
-				caving_file_name_show);
-		break;
-
-		case 7:
-		file_7 = lv_imgbtn_creat_mks(mks_global.mks_src, file_7, &file, &file, LV_ALIGN_CENTER, caving_first_file_x + 360, caving_first_file_y + 105, event_handler_file7);
-		Label_file_7 = label_for_file(mks_global.mks_src, 
-				Label_file_7, 
-				caving_first_file_label_x + 360, 
-				caving_first_file_label_y + 105, 
-				// mks_file_list.filename_str[7], 
-				name,
-				caving_file_name_show);
-		break;
+		case 0: file_0 = file_list[num]; Label_file_0 = Label_file_list[num]; break;
+		case 1: file_1 = file_list[num]; Label_file_1 = Label_file_list[num]; break;
+		case 2: file_2 = file_list[num]; Label_file_2 = Label_file_list[num]; break;
+		case 3: file_3 = file_list[num]; Label_file_3 = Label_file_list[num]; break;
+		case 4: file_4 = file_list[num]; Label_file_4 = Label_file_list[num]; break;
+		case 5: file_5 = file_list[num]; Label_file_5 = Label_file_list[num]; break;
+		case 6: file_6 = file_list[num]; Label_file_6 = Label_file_list[num]; break;
+		case 7: file_7 = file_list[num]; Label_file_7 = Label_file_list[num]; break;
 	}
 
 	lv_refr_now(lv_refr_get_disp_refreshing());
@@ -775,97 +789,20 @@ void draw_file_btmimg(void) {
 }
 
 void mks_del_file_obj(void) {
+	for(uint8_t i = 0; i < MKS_FILE_NUM; ++i) {
+		if(file_list[i] != NULL) {
+			lv_obj_del(file_list[i]);
+			file_list[i] = NULL;
+		}
+		if(Label_file_list[i] != NULL) {
+			lv_obj_del(Label_file_list[i]);
+			Label_file_list[i] = NULL;
+		}
+	}
 
-	if(mks_file_list.file_begin_num == 1) {
-		lv_obj_del(file_0);
-		lv_obj_del(Label_file_0);
-	}
-	else if(mks_file_list.file_begin_num == 2){
-		lv_obj_del(file_0);
-		lv_obj_del(file_1);
-		lv_obj_del(Label_file_0);
-		lv_obj_del(Label_file_1);
-	}
-	else if(mks_file_list.file_begin_num == 3){
-		lv_obj_del(file_0);
-		lv_obj_del(file_1);
-		lv_obj_del(file_2);
-		lv_obj_del(Label_file_0);
-		lv_obj_del(Label_file_1);
-		lv_obj_del(Label_file_2);
-	}
-	else if(mks_file_list.file_begin_num == 4){
-		lv_obj_del(file_0);
-		lv_obj_del(file_1);
-		lv_obj_del(file_2);
-		lv_obj_del(file_3);
-		lv_obj_del(Label_file_0);
-		lv_obj_del(Label_file_1);
-		lv_obj_del(Label_file_2);
-		lv_obj_del(Label_file_3);
-
-	}
-	else if(mks_file_list.file_begin_num == 5){
-		lv_obj_del(file_0);
-		lv_obj_del(file_1);
-		lv_obj_del(file_2);
-		lv_obj_del(file_3);
-		lv_obj_del(file_4);
-		lv_obj_del(Label_file_0);
-		lv_obj_del(Label_file_1);
-		lv_obj_del(Label_file_2);
-		lv_obj_del(Label_file_3);
-		lv_obj_del(Label_file_4);
-	}
-	else if(mks_file_list.file_begin_num == 6){
-		lv_obj_del(file_0);
-		lv_obj_del(file_1);
-		lv_obj_del(file_2);
-		lv_obj_del(file_3);
-		lv_obj_del(file_4);
-		lv_obj_del(file_5);
-		lv_obj_del(Label_file_0);
-		lv_obj_del(Label_file_1);
-		lv_obj_del(Label_file_2);
-		lv_obj_del(Label_file_3);
-		lv_obj_del(Label_file_4);
-		lv_obj_del(Label_file_5);
-	}
-	else if(mks_file_list.file_begin_num == 7){
-		lv_obj_del(file_0);
-		lv_obj_del(file_1);
-		lv_obj_del(file_2);
-		lv_obj_del(file_3);
-		lv_obj_del(file_4);
-		lv_obj_del(file_5);
-		lv_obj_del(file_6);
-		lv_obj_del(Label_file_0);
-		lv_obj_del(Label_file_1);
-		lv_obj_del(Label_file_2);
-		lv_obj_del(Label_file_3);
-		lv_obj_del(Label_file_4);
-		lv_obj_del(Label_file_5);
-		lv_obj_del(Label_file_6);
-	}
-	else if(mks_file_list.file_begin_num == 8){
-		lv_obj_del(file_0);
-		lv_obj_del(file_1);
-		lv_obj_del(file_2);
-		lv_obj_del(file_3);
-		lv_obj_del(file_4);
-		lv_obj_del(file_5);
-		lv_obj_del(file_6);
-		lv_obj_del(file_7); 
-
-		lv_obj_del(Label_file_0);
-		lv_obj_del(Label_file_1);
-		lv_obj_del(Label_file_2);
-		lv_obj_del(Label_file_3);
-		lv_obj_del(Label_file_4);
-		lv_obj_del(Label_file_5);
-		lv_obj_del(Label_file_6);
-		lv_obj_del(Label_file_7);
-	}
+	file_0 = file_1 = file_2 = file_3 = file_4 = file_5 = file_6 = file_7 = NULL;
+	Label_file_0 = Label_file_1 = Label_file_2 = Label_file_3 = NULL;
+	Label_file_4 = Label_file_5 = Label_file_6 = Label_file_7 = NULL;
 }
 
 void disable_file_click() {

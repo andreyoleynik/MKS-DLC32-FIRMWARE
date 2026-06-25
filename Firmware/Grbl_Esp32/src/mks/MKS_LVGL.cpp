@@ -2,7 +2,7 @@
 #include "TFT_eSPI.h"
 #include "MKS_draw_language.h"
 
-#define LV_BUF_SIZE              10 * LV_HOR_RES_MAX
+#define LV_BUF_SIZE              30 * LV_HOR_RES_MAX
 GRBL_CRTL mks_grbl;
 LVGL_UI_PAGE_t mks_ui_page;
 
@@ -43,7 +43,9 @@ void mks_lvgl_init(void) {
     lv_indev_drv_register(&indev_drv);
 }
 
+#if LV_COLOR_DEPTH == 8
 uint16_t temp_dma_buffer[LV_BUF_SIZE];
+#endif
 
 void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color_t * color_p) {
 
@@ -78,6 +80,10 @@ bool my_indev_touch(struct _lv_indev_drv_t * indev_drv, lv_indev_data_t * data) 
     uint16_t touchX=0, touchY=0;
     static uint16_t last_x = 0;
     static uint16_t last_y = 0;
+    static bool touch_beep_latched = false;
+    static uint8_t touch_release_stable_count = 0;
+    const uint16_t touch_beep_ms = 40;
+    const uint8_t touch_release_stable_need = 3;
     boolean touched = tft.getTouch(&touchY, &touchX);
 
     if(touchX > 480) {
@@ -93,15 +99,26 @@ bool my_indev_touch(struct _lv_indev_drv_t * indev_drv, lv_indev_data_t * data) 
         data->point.x = last_x;
         data->point.y = last_y;
         data->state = LV_INDEV_STATE_PR;
-        
-        BEEP_ON;
+
+        touch_release_stable_count = 0;
+        if(!touch_beep_latched) {
+            ts35_beep_on(touch_beep_ms);
+            touch_beep_latched = true;
+        }
     }
     else {
         data->point.x = last_x;
         data->point.y = last_y;
         data->state = LV_INDEV_STATE_REL;
-        BEEP_OFF;
+
+        if(touch_release_stable_count < touch_release_stable_need) {
+            touch_release_stable_count++;
+        }
+        if(touch_release_stable_count >= touch_release_stable_need) {
+            touch_beep_latched = false;
+        }
     }
+
     return false;
 }   
 
@@ -123,7 +140,7 @@ void mks_grbl_parg_init(void) {
     set_language(1); 
     
     mks_grbl.light_status = GRBL_Light_Off;
-    mks_grbl.move_dis = M_1_MM;
+    mks_grbl.move_dis = M_10_MM;
     mks_grbl.move_speed = HIGHT_SPEED;
     mks_grbl.bl_status = BL_NONE;               
     mks_grbl.is_mks_ts35_flag = false;

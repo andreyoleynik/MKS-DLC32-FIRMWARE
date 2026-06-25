@@ -29,7 +29,21 @@ uint8_t                    SD_client     = CLIENT_SERIAL;
 // uint8_t                    SD_client     = CLIENT_SD;
 WebUI::AuthenticationLevel SD_auth_level = WebUI::AuthenticationLevel::LEVEL_GUEST;
 uint32_t                   sd_current_line_number;     // stores the most recent line number read from the SD
+uint32_t                   sd_total_line_number;       // stores the total number of lines in the current file
 static char                comment[LINE_BUFFER_SIZE];  // Line to be executed. Zero-terminated.
+
+// Сериализация доступа к глобальному myFile: protocol-task (readFileLine во время
+// задания) и UI/тач-задача (sd_report_perc_complete / closeFile со «Стоп») трогают
+// один fs::File одновременно -> use-after-free / порча позиции -> краш / битый gcode.
+// RAII-лок под рекурсивным мьютексом сериализует все обращения. portMAX_DELAY безопасен:
+// критич. секции короткие, без ложного EOF и без реального зависания protocol-петли.
+static SemaphoreHandle_t   sd_file_mux = xSemaphoreCreateRecursiveMutex();
+namespace {
+    struct SdFileLock {
+        SdFileLock() { xSemaphoreTakeRecursive(sd_file_mux, portMAX_DELAY); }
+        ~SdFileLock() { xSemaphoreGiveRecursive(sd_file_mux); }
+    };
+}
 
 #define USE_HSPI_FOR_SD 1
 #ifdef USE_HSPI_FOR_SD
@@ -88,7 +102,7 @@ void listDir(fs::FS& fs, const char* dirname, uint8_t levels, uint8_t client) {
     while (file) {
         if (file.isDirectory()) {
             if (levels) {
-                listDir(fs, file.name(), levels - 1, client);
+                listDir(fs, file.path(), levels - 1, client);
             }
         } else {
             memset(filename_check_str, 0, sizeof(filename_check_str));
@@ -117,41 +131,104 @@ void mks_listDir(fs::FS& fs, const char* dirname, uint8_t levels) {
         // ...找不到文件夹（根文件夹）
         return;
     }
-    File file = root.openNextFile(); 
-    
-    while(file) {
+    File file = root.openNextFile();
+    uint16_t match_count = 0;
 
-        if (file.isDirectory()) {
-            if (levels) {
-                mks_listDir(fs, file.name(), levels - 1);
-            }
-        } else {
-
-            memcpy(mks_filename_check_str, file.name(), 255);
+    // Pass 1: count all matching files.
+    while (file) {
+        if (!file.isDirectory()) {
+            memset(mks_filename_check_str, 0, sizeof(mks_filename_check_str));
             strcpy(mks_filename_check_str, file.name());
-
-            if(filename_check(mks_filename_check_str, strlen(mks_filename_check_str)) == true) {
-                if((mks_file_list.file_count >= ((mks_file_list.file_page * MKS_FILE_NUM)-(MKS_FILE_NUM))) 
-                    && (mks_file_list.file_count < (mks_file_list.file_page * MKS_FILE_NUM))) {
-                    memset(mks_file_list.filename_str[mks_file_list.file_begin_num], 0, sizeof(mks_file_list.filename_str[mks_file_list.file_begin_num]));
-                    strcpy(mks_file_list.filename_str[mks_file_list.file_begin_num], mks_filename_check_str);
-                    mks_file_list.file_size[mks_file_list.file_begin_num] = file.size();
-                    draw_filexx(mks_file_list.file_begin_num, mks_file_list.filename_str[mks_file_list.file_begin_num]);
-                    mks_file_list.file_begin_num++;
-                }
-                mks_file_list.file_count++;
-                if(mks_file_list.file_count >= (mks_file_list.file_page * MKS_FILE_NUM)) return;
+            if (filename_check(mks_filename_check_str, strlen(mks_filename_check_str)) == true) {
+                match_count++;
             }
         }
-        file =  root.openNextFile();
+        file = root.openNextFile();
+    }
+
+    mks_file_list.file_count = match_count;
+    if (match_count == 0) {
+        return;
+    }
+
+    uint16_t page_offset = (mks_file_list.file_page - 1) * MKS_FILE_NUM;
+    if (page_offset >= match_count) {
+        return;
+    }
+
+    uint16_t newest_index = match_count - 1 - page_offset;
+    uint16_t oldest_index = (newest_index >= (MKS_FILE_NUM - 1)) ? (newest_index - (MKS_FILE_NUM - 1)) : 0;
+
+    char page_names[MKS_FILE_NUM][MKS_FILE_NAME_LENGTH];
+    uint32_t page_sizes[MKS_FILE_NUM] = {0};
+    bool page_used[MKS_FILE_NUM] = {false};
+
+    root.close();
+    root = fs.open(dirname);
+    if (!root || !root.isDirectory()) {
+        return;
+    }
+
+    file = root.openNextFile();
+    uint16_t seen_index = 0;
+
+    // Pass 2: collect entries for the current page in reverse order (newest at top).
+    while (file) {
+        if (!file.isDirectory()) {
+            memset(mks_filename_check_str, 0, sizeof(mks_filename_check_str));
+            strcpy(mks_filename_check_str, file.name());
+
+            if (filename_check(mks_filename_check_str, strlen(mks_filename_check_str)) == true) {
+                if (seen_index >= oldest_index && seen_index <= newest_index) {
+                    uint8_t slot = newest_index - seen_index;
+                    if (slot < MKS_FILE_NUM) {
+                        memset(page_names[slot], 0, sizeof(page_names[slot]));
+                        strncpy(page_names[slot], mks_filename_check_str, MKS_FILE_NAME_LENGTH - 1);
+                        page_sizes[slot] = file.size();
+                        page_used[slot] = true;
+                    }
+                }
+                seen_index++;
+            }
+        }
+        file = root.openNextFile();
+    }
+
+    for (uint8_t i = 0; i < MKS_FILE_NUM; i++) {
+        if (!page_used[i]) {
+            continue;
+        }
+        memset(mks_file_list.filename_str[mks_file_list.file_begin_num], 0, sizeof(mks_file_list.filename_str[mks_file_list.file_begin_num]));
+        strncpy(mks_file_list.filename_str[mks_file_list.file_begin_num], page_names[i], MKS_FILE_NAME_LENGTH - 1);
+        mks_file_list.file_size[mks_file_list.file_begin_num] = page_sizes[i];
+        draw_filexx(mks_file_list.file_begin_num, mks_file_list.filename_str[mks_file_list.file_begin_num]);
+        mks_file_list.file_begin_num++;
     }
 }
 
 boolean openFile(fs::FS& fs, const char* path) {
+    SdFileLock _lk;
     myFile = fs.open(path);
     if (!myFile) {
         return false;
     }
+    sd_total_line_number = 0;
+    bool     has_content  = false;
+    bool     last_was_nl   = true;
+    uint32_t total_lines   = 0;
+    while (myFile.available()) {
+        char c = myFile.read();
+        has_content = true;
+        last_was_nl  = (c == '\n');
+        if (c == '\n') {
+            total_lines++;
+        }
+    }
+    if (has_content && !last_was_nl) {
+        total_lines++;
+    }
+    sd_total_line_number = total_lines;
+    myFile.seek(0);
     set_sd_state(SDState::BusyPrinting);
     SD_ready_next          = false;  // this will get set to true when Grbl issues "ok" message
     sd_current_line_number = 0;
@@ -159,18 +236,20 @@ boolean openFile(fs::FS& fs, const char* path) {
 }
 
 boolean closeFile() {
+    SdFileLock _lk;
     if (!myFile) {
         return false;
     }
     set_sd_state(SDState::Idle);
     SD_ready_next          = false;
     sd_current_line_number = 0;
+    sd_total_line_number   = 0;
     myFile.close();
-    SD.end();
     return true;
 }
 
 boolean setFilePos(uint32_t pos) {
+    SdFileLock _lk;
     if (!myFile) {
         return false;
     }
@@ -181,6 +260,7 @@ boolean setFilePos(uint32_t pos) {
 
 
 boolean mks_openFile(fs::FS& fs, const char* path) {
+    SdFileLock _lk;
     myFile = fs.open(path);
     if (!myFile) {
         return false;
@@ -196,6 +276,7 @@ boolean mks_openFile(fs::FS& fs, const char* path) {
   return true if a line is
 */
 boolean readFileLine(char* line, int maxlen) {
+    SdFileLock _lk;
     if (!myFile) {
         report_status_message(Error::FsFailedRead, SD_client);
         return false;
@@ -217,7 +298,7 @@ boolean readFileLine(char* line, int maxlen) {
 }
 
 boolean readFileBuff(uint8_t *buf, uint32_t size) {
-
+    SdFileLock _lk;
     if(!myFile) {
         report_status_message(Error::FsFailedRead, SD_client);
         return false;
@@ -230,8 +311,12 @@ boolean readFileBuff(uint8_t *buf, uint32_t size) {
 
 // return a percentage complete 50.5 = 50.5%
 float sd_report_perc_complete() {
+    SdFileLock _lk;
     if (!myFile) {
         return 0.0;
+    }
+    if (sd_total_line_number > 0) {
+        return (float)sd_current_line_number / (float)sd_total_line_number * 100.0f;
     }
     return (float)myFile.position() / (float)myFile.size() * 100.0f;
 }
@@ -248,30 +333,49 @@ void sd_set_current_line_number(uint32_t num) {
 SDState sd_state = SDState::Idle;
 
 SDState get_sd_state(bool refresh) {
-    if (SDCARD_DET_PIN != UNDEFINED_PIN) {
-        if (digitalRead(SDCARD_DET_PIN) != SDCARD_DET_VAL) {
-            sd_state = SDState::NotPresent;
-            return sd_state;
-            //no need to go further if SD detect is not correct
-        }
-    }
-
     //if busy doing something return state
     if (!((sd_state == SDState::NotPresent) || (sd_state == SDState::Idle))) {
         return sd_state;
     }
+
+    bool cd_present = true;
+    if (SDCARD_DET_PIN != UNDEFINED_PIN) {
+        // Debounce card-detect to avoid transient false "No SD card" on noisy CD lines.
+        static uint8_t cd_miss_count = 0;
+        const uint8_t  cd_miss_need  = 3;
+        if (digitalRead(SDCARD_DET_PIN) != SDCARD_DET_VAL) {
+            if (cd_miss_count < 255) {
+                cd_miss_count++;
+            }
+        } else {
+            cd_miss_count = 0;
+        }
+        cd_present = (cd_miss_count < cd_miss_need);
+    }
+
     if (!refresh) {
+        if (!cd_present) {
+            sd_state = SDState::NotPresent;
+        }
         return sd_state;  //to avoid refresh=true + busy to reset SD and waste time
+    }
+
+    // If already mounted and known idle, avoid unnecessary unmount/remount churn.
+    if ((sd_state == SDState::Idle) && (SD.cardSize() > 0)) {
+        return sd_state;
     }
 
     //SD is idle or not detected, let see if still the case
     SD.end();
     sd_state = SDState::NotPresent;
-    //using default value for speed ? should be parameter
-    //refresh content if card was removed
-    if (SD.begin((GRBL_SPI_SS == -1) ? SS : GRBL_SPI_SS, SD_SPI, GRBL_SPI_FREQ, "/sd", 2)) {
+    const int sd_ss_pin = (GRBL_SPI_SS == -1) ? SS : GRBL_SPI_SS;
+    SD_SPI.begin(GRBL_SPI_SCK, GRBL_SPI_MISO, GRBL_SPI_MOSI, sd_ss_pin);
+
+    if (SD.begin(sd_ss_pin, SD_SPI, GRBL_SPI_FREQ, "/sd", 2)) {
         if (SD.cardSize() > 0) {
             sd_state = SDState::Idle;
+        } else {
+            SD.end();
         }
     }
     return sd_state;

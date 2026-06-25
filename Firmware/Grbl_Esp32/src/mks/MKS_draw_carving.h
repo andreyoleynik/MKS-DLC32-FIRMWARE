@@ -16,16 +16,16 @@ typedef enum {
 
     caving_src1_x = 10,
     caving_src1_y = 10,
-    caving_src1_size_x = 460,
-    caving_src1_size_y = 90,
+    caving_src1_size_x = 70,
+    caving_src1_size_y = 300,
 
     caving_back_x = 20,
     caving_back_y = 60,
 
-    caving_up_x = -120,
-    caving_up_y = -15,
-    caving_next_x = -30,
-    caving_next_y = -15,
+    caving_up_x = 0,
+    caving_up_y = -85,
+    caving_next_x = 0,
+    caving_next_y = -20,
 
     caving_first_file_x = -180,
     caving_first_file_y = 0,

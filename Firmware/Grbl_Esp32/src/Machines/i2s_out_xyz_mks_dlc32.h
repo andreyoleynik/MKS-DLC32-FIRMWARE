@@ -123,6 +123,8 @@
 #define IIC_SDA                     GPIO_NUM_0
 
 //#define COOLANT_FLOOD_PIN           IIC_SCL
+#define COOLANT_FLOOD_PIN           IIC_SCL
+#define COOLANT_MIST_PIN            IIC_SDA
 
 //sd card spi
 #define GRBL_SPI_SCK 			    GPIO_NUM_14
@@ -195,4 +197,5 @@
 
 #define DEFAULT_BEEP_STATUS                 1
 #define DEFAULT_LANGUAGE_STATUS             1       // default simple engliash
+#define DEFAULT_SCULPTURE_LIST_MODE         1
 

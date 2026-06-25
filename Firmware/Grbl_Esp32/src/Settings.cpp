@@ -287,7 +287,7 @@ FloatSetting::FloatSetting(const char*   description,
                            float         maxVal,
                            bool (*checker)(char*) = NULL) :
     Setting(description, type, permissions, grblName, name, checker),
-    _defaultValue(defVal), _currentValue(defVal), _minValue(minVal), _maxValue(maxVal) {}
+    _defaultValue(defVal), _currentValue(defVal), _storedValue(defVal), _hasStoredValue(false), _minValue(minVal), _maxValue(maxVal) {}
 
 void FloatSetting::load() {
     union {
@@ -296,14 +296,21 @@ void FloatSetting::load() {
     } v;
     if (nvs_get_i32(_handle, _keyName, &v.ival)) {
         _currentValue = _defaultValue;
+        _storedValue  = _defaultValue;
+        _hasStoredValue = false;
     } else {
         _currentValue = v.fval;
+        _storedValue  = v.fval;
+        _hasStoredValue = true;
     }
 }
 
 void FloatSetting::setDefault() {
+    float oldStored = _storedValue;
     _currentValue = _defaultValue;
-    if (_storedValue != _currentValue) {
+    _storedValue  = _defaultValue;
+    _hasStoredValue = false;
+    if (oldStored != _currentValue) {
         nvs_erase_key(_handle, _keyName);
     }
 }
@@ -328,6 +335,7 @@ Error FloatSetting::setStringValue(char* s) {
     if (_storedValue != _currentValue) {
         if (_currentValue == _defaultValue) {
             nvs_erase_key(_handle, _keyName);
+            _hasStoredValue = false;
         } else {
             union {
                 int32_t ival;
@@ -338,6 +346,7 @@ Error FloatSetting::setStringValue(char* s) {
                 return Error::NvsSetFailed;
             }
             _storedValue = _currentValue;
+            _hasStoredValue = true;
         }
     }
     check(NULL);
@@ -751,7 +760,7 @@ Error GrblCommand::action(char* value, WebUI::AuthenticationLevel auth_level, We
 Coordinates* coords[CoordIndex::End];
 
 bool Coordinates::load() {
-    size_t len;
+    size_t len = sizeof(_currentValue);
     switch (nvs_get_blob(Setting::_handle, _name, _currentValue, &len)) {
         case ESP_OK:
             return true;

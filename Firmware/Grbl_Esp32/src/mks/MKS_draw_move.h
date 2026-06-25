@@ -55,6 +55,8 @@ typedef struct {
 
     lv_obj_t *xy_home;
     lv_obj_t *z_home;
+    lv_obj_t *xy_hhome;
+    lv_obj_t *z_hhome;
     
 
     lv_obj_t* btn_len;

@@ -40,25 +40,36 @@ LV_IMG_DECLARE(png_cave_pwr_pre);       // 功率
 LV_IMG_DECLARE(png_cave_speed_pre);     // 速度
 LV_IMG_DECLARE(png_times);              // 雕刻次数
 
+static void sync_print_state_ui(void) {
+    if (print_src.print_imgbtn_suspend == NULL || print_src.print_Label_p_suspend == NULL) {
+        return;
+    }
+
+    if (sys.state == State::Hold) {
+        lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_PR, &png_start_pre);
+        lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_REL, &png_start);
+        lv_label_set_static_text(print_src.print_Label_p_suspend, "Start");
+    } else {
+        lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_PR, &png_pause_pre);
+        lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_REL, &png_pause);
+        lv_label_set_static_text(print_src.print_Label_p_suspend, "Pause");
+    }
+}
+
 static void event_handler_suspend(lv_obj_t* obj, lv_event_t event) {
 
     if (event == LV_EVENT_RELEASED) {
 
         if(sys.state == State::Hold) {
-            lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_PR, &png_start_pre);
-            lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_REL, &png_start);
-            lv_label_set_static_text(print_src.print_Label_p_suspend, "Star");
             MKS_GRBL_CMD_SEND("~");
             if(print_setting._need_to_start_write) {
                 sys_rt_s_override = print_setting.cur_spindle_pwr;
             }
+            sync_print_state_ui();
         }   
         else if(sys.state == State::Cycle)    {
-            lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_PR, &png_pause_pre);
-            lv_imgbtn_set_src(print_src.print_imgbtn_suspend, LV_BTN_STATE_REL, &png_pause);
-            lv_label_set_static_text(print_src.print_Label_p_suspend, "Pause");
             MKS_GRBL_CMD_SEND("!");
-            // spindle->stop();
+            sync_print_state_ui();
         } 
     }
 }
@@ -133,25 +144,38 @@ void mks_draw_print(void) {
     print_src.print_imgbtn_stop     = lv_imgbtn_creat_n_mks(mks_global.mks_src,  print_src.print_imgbtn_stop, &png_stop_pre, &png_stop, 165, 250 ,event_handler_stop);
     print_src.print_imgbtn_adj      = lv_imgbtn_creat_n_mks(mks_global.mks_src,  print_src.print_imgbtn_adj, &png_adj_pre, &png_adj, 322, 250, event_handler_adj);
 
-    print_src.print_bar_print = mks_lv_bar_set(mks_global.mks_src, print_src.print_bar_print, 464, 50, print_bar_pic_x, print_bar_pic_y, 0);
+    print_src.print_bar_print = mks_lv_bar_set(mks_global.mks_src, print_src.print_bar_print, 464, 40, print_bar_pic_x, 30, 0);
 
     lv_bar_set_style(print_src.print_bar_print, LV_BAR_STYLE_BG , &print_src.print_bar_bg_style);
     lv_bar_set_style(print_src.print_bar_print, LV_BAR_STYLE_INDIC , &print_src.print_bar_indic_style);
 
     print_src.print_Label_p_suspend = label_for_imgbtn_name_mid(mks_global.mks_src, print_src.print_Label_p_suspend, print_src.print_imgbtn_suspend ,-35 ,0 ,"Pause");
     print_src.print_Label_p_stop = label_for_imgbtn_name_mid(mks_global.mks_src, print_src.print_Label_p_stop, print_src.print_imgbtn_stop ,-40 ,0 ,"Stop");
-    print_src.print_Label_p_adj = label_for_imgbtn_name_mid(mks_global.mks_src, print_src.print_Label_p_adj, print_src.print_imgbtn_adj ,-20 ,0 ,"Adjustment");
+    print_src.print_Label_p_adj = label_for_imgbtn_name_mid(mks_global.mks_src, print_src.print_Label_p_adj, print_src.print_imgbtn_adj ,0 ,0 ,"Adjustment");
     
 
 
-    print_src.print_Label_power = label_for_text(mks_global.mks_src, print_src.print_Label_power, NULL, 194, 161, LV_ALIGN_IN_TOP_LEFT, "S:0%");  // 输出功率
-    print_src.print_Label_caveSpeed =  label_for_text(mks_global.mks_src, print_src.print_Label_caveSpeed, NULL, 39, 161, LV_ALIGN_IN_TOP_LEFT, "F:0%");    // 雕刻速度
-    print_src.print_Label_caveR =  label_for_text(mks_global.mks_src, print_src.print_Label_caveR, NULL, 356, 161, LV_ALIGN_IN_TOP_LEFT, "R:0%");  
+    print_src.print_Label_caveSpeed =  label_for_text(mks_global.mks_src, print_src.print_Label_caveSpeed, NULL, 20, 82, LV_ALIGN_IN_TOP_LEFT, "Feed:0%");
+    print_src.print_Label_power = label_for_text(mks_global.mks_src, print_src.print_Label_power, NULL, 178, 82, LV_ALIGN_IN_TOP_LEFT, "Spindle:0%");
+    print_src.print_Label_caveR =  label_for_text(mks_global.mks_src, print_src.print_Label_caveR, NULL, 338, 82, LV_ALIGN_IN_TOP_LEFT, "Rapid:0%");
+    print_src.print_Label_moveSpeed = label_for_text(mks_global.mks_src, print_src.print_Label_moveSpeed, NULL, 20, 101, LV_ALIGN_IN_TOP_LEFT, "Move:0 mm/min");
+
+    print_src.print_Label_wpos = label_for_text(mks_global.mks_src, print_src.print_Label_wpos, NULL, 40, 118, LV_ALIGN_IN_TOP_LEFT, "Wpos");
+    print_src.print_Label_mpos = label_for_text(mks_global.mks_src, print_src.print_Label_mpos, NULL, 280, 118, LV_ALIGN_IN_TOP_LEFT, "Mpos");
+
+    print_src.print_Label_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_x_pos, NULL, 40, 145, LV_ALIGN_IN_TOP_LEFT, "X:   0.00");
+    print_src.print_Label_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_y_pos, NULL, 40, 175, LV_ALIGN_IN_TOP_LEFT, "Y:   0.00");
+    print_src.print_Label_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_z_pos, NULL, 40, 205, LV_ALIGN_IN_TOP_LEFT, "Z:   0.00");
+
+    print_src.print_Label_m_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_pos, NULL, 280, 145, LV_ALIGN_IN_TOP_LEFT, "X:   0.00");
+    print_src.print_Label_m_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_pos, NULL, 280, 175, LV_ALIGN_IN_TOP_LEFT, "Y:   0.00");
+    print_src.print_Label_m_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_pos, NULL, 280, 205, LV_ALIGN_IN_TOP_LEFT, "Z:   0.00");
 
     Label_print_file_name = label_for_text(mks_global.mks_src, Label_print_file_name, NULL, 30, 6, LV_ALIGN_IN_TOP_LEFT, print_file_name);
     lv_label_set_style(Label_print_file_name, LV_LABEL_STYLE_MAIN, &print_src.print_file_name_style);
 
     print_src.print_bar_print_percen = label_for_btn_name(print_src.print_bar_print, print_src.print_bar_print_percen, 190, 0, "0%");
+    sync_print_state_ui();
 
     mks_ui_page.mks_ui_page = MKS_UI_Pring;  //进入雕刻界面
 	mks_ui_page.wait_count = DEFAULT_UI_COUNT;
@@ -1029,20 +1053,55 @@ void set_print_click(bool status) {
 
 char pl_info[128];
 void mks_print_data_updata(void) {
+    float machine_pos[MAX_N_AXIS];
+    float work_pos[MAX_N_AXIS];
+    static char w_x_pos[24];
+    static char w_y_pos[24];
+    static char w_z_pos[24];
+    static char m_x_pos[24];
+    static char m_y_pos[24];
+    static char m_z_pos[24];
 
-    sprintf(print_data_updata.print_pwr_str, "S:%d%%", sys_rt_s_override);
+    float* mpos = system_get_mpos();
+    machine_pos[0] = mpos[0];
+    machine_pos[1] = mpos[1];
+    machine_pos[2] = mpos[2];
+
+    work_pos[0] = machine_pos[0];
+    work_pos[1] = machine_pos[1];
+    work_pos[2] = machine_pos[2];
+    mpos_to_wpos(work_pos);
+
+    snprintf(print_data_updata.print_pwr_str, sizeof(print_data_updata.print_pwr_str), "Spindle:%d%%", sys_rt_s_override);
     print_src.print_Label_power = mks_lv_label_updata(print_src.print_Label_power, print_data_updata.print_pwr_str);
 
-    sprintf(print_data_updata.print_speed_str, "F:%2d%%", sys_rt_f_override);  
+    snprintf(print_data_updata.print_speed_str, sizeof(print_data_updata.print_speed_str), "Feed:%2d%%", sys_rt_f_override);
     print_src.print_Label_caveSpeed = mks_lv_label_updata(print_src.print_Label_caveSpeed, print_data_updata.print_speed_str);
 
-    sprintf(print_data_updata.print_rapid_str, "R:%2d%%", sys_rt_r_override);
+    snprintf(print_data_updata.print_rapid_str, sizeof(print_data_updata.print_rapid_str), "Rapid:%2d%%", sys_rt_r_override);
     print_src.print_Label_caveR = mks_lv_label_updata(print_src.print_Label_caveR, print_data_updata.print_rapid_str);
 
-    if (SD_ready_next == false) {
-        if (mks_grbl.is_mks_ts35_flag == true) {
-            mks_print_bar_updata();
-        }
+    snprintf(print_data_updata.print_move_speed_str, sizeof(print_data_updata.print_move_speed_str), "Move:%.0f mm/min", st_get_realtime_rate());
+    print_src.print_Label_moveSpeed = mks_lv_label_updata(print_src.print_Label_moveSpeed, print_data_updata.print_move_speed_str);
+
+    snprintf(w_x_pos, sizeof(w_x_pos), "X:%7.2f", work_pos[0]);
+    print_src.print_Label_x_pos = mks_lv_label_updata(print_src.print_Label_x_pos, w_x_pos);
+    snprintf(w_y_pos, sizeof(w_y_pos), "Y:%7.2f", work_pos[1]);
+    print_src.print_Label_y_pos = mks_lv_label_updata(print_src.print_Label_y_pos, w_y_pos);
+    snprintf(w_z_pos, sizeof(w_z_pos), "Z:%7.2f", work_pos[2]);
+    print_src.print_Label_z_pos = mks_lv_label_updata(print_src.print_Label_z_pos, w_z_pos);
+
+    snprintf(m_x_pos, sizeof(m_x_pos), "X:%7.2f", machine_pos[0]);
+    print_src.print_Label_m_x_pos = mks_lv_label_updata(print_src.print_Label_m_x_pos, m_x_pos);
+    snprintf(m_y_pos, sizeof(m_y_pos), "Y:%7.2f", machine_pos[1]);
+    print_src.print_Label_m_y_pos = mks_lv_label_updata(print_src.print_Label_m_y_pos, m_y_pos);
+    snprintf(m_z_pos, sizeof(m_z_pos), "Z:%7.2f", machine_pos[2]);
+    print_src.print_Label_m_z_pos = mks_lv_label_updata(print_src.print_Label_m_z_pos, m_z_pos);
+
+    sync_print_state_ui();
+
+    if (get_sd_state(false) == SDState::BusyPrinting) {
+        mks_print_bar_updata();
     }
 }
 

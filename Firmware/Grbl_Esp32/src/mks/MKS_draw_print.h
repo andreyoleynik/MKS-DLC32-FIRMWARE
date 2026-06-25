@@ -119,6 +119,7 @@ typedef struct {
     lv_obj_t* print_Label_caveSpeed;
     lv_obj_t* print_Label_caveR;
     lv_obj_t* print_Label_caveTimes;
+    lv_obj_t* print_Label_moveSpeed;
 
     lv_obj_t* print_Label_p_suspend;
     lv_obj_t* print_Label_p_stop;
@@ -129,6 +130,11 @@ typedef struct {
     lv_obj_t* print_Label_x_pos;
     lv_obj_t* print_Label_y_pos;
     lv_obj_t* print_Label_z_pos;
+    lv_obj_t* print_Label_m_x_pos;
+    lv_obj_t* print_Label_m_y_pos;
+    lv_obj_t* print_Label_m_z_pos;
+    lv_obj_t* print_Label_mpos;
+    lv_obj_t* print_Label_wpos;
     lv_obj_t* print_Label_popup;
     lv_obj_t* print_Label_popup_sure;
     lv_obj_t* print_Label_popup_cancel;
@@ -149,13 +155,14 @@ extern MKS_PRINT_PAGE_t print_src;
 
 typedef struct {
 
-    char print_xpos_str[10];
-    char print_ypos_str[10];
-    char print_zpos_str[10];
-    char print_pwr_str[10];
-    char print_speed_str[10];
-    char print_rapid_str[10];
-    char print_times_str[10]; // 雕刻次数
+    char print_xpos_str[16];
+    char print_ypos_str[16];
+    char print_zpos_str[16];
+    char print_pwr_str[24];
+    char print_speed_str[24];
+    char print_rapid_str[24];
+    char print_move_speed_str[32];
+    char print_times_str[16]; // 雕刻次数
     
     float x_pos = 0;
     float y_pos = 0;

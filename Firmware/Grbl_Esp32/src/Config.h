@@ -75,7 +75,7 @@ Some features should not be changed. See notes below.
 #    endif
 #endif
 
-const int MAX_N_AXIS = 6;
+const int MAX_N_AXIS = 3;
 
 // Number of axes defined (steppers, servos, etc) (valid range: 3 to 6)
 // Even if your machine only uses less than the minimum of 3, you should select 3
@@ -128,19 +128,21 @@ const int MAX_N_AXIS = 6;
 #define ENABLE_OTA                      /* enable OTA                                        */
 #define ENABLE_TELNET                   /* enable telnet                                     */
 #define ENABLE_TELNET_WELCOME_MSG       /* display welcome string when connect to telnet     */                           
-#define ENABLE_MDNS                     /* enable mDNS discovery                             */   
-// #define ENABLE_SSDP                  /* enable UPNP discovery                             */   
+#define ENABLE_MDNS                     /* enable mDNS discovery                             */
 // #define ENABLE_NOTIFICATIONS         /* enable notifications                              */   
 
 //#define ENABLE_TELNET_OTHER_TASK
 
 // WebUI <-> ядро GRBL по WebSocket. БЕЗ этих флагов вкладка настроек WebUI висит
+// #define ENABLE_WIFI_STARTUP_SCAN     /* run an async WiFi scan when services start         */
+#define ENABLE_REMOTE_CLIENT            /* UDP-маячок обнаружения + outbound Remote_Client bridge (наша фича)         */
+#define WIFI_STA_RECONNECT_INTERVAL_MS   30000UL        /* soft reconnect pacing in milliseconds        */
 // вечно (issue #25): GRBL-команды ($$, jog, смена hostname) уходят в Serial2Socket,
 // но не читаются (IN) и ответы не уходят в сокет (OUT). Включено для рабочего WebUI.
 #define ENABLE_SERIAL2SOCKET_IN
 #define ENABLE_SERIAL2SOCKET_OUT
 
-#define TELNET_CLIENTS_TOTAL 3
+#define TELNET_CLIENTS_TOTAL 2
 
 // Captive portal is used when WiFi is in access point mode.  It lets the
 // WebUI come up automatically in the browser, instead of requiring the user
@@ -321,7 +323,7 @@ static const uint8_t NHomingLocateCycle = 1;  // Integer (1-128)
 // note the allowable values in the descriptions following each define.
 namespace FeedOverride {
     const int Default         = 100;  // 100%. Don't change this value.
-    const int Max             = 200;  // Percent of programmed feed rate (100-255). Usually 120% or 200%
+    const int Max             = 250;  // Percent of programmed feed rate (100-255). Usually 120% or 200%
     const int Min             = 10;   // Percent of programmed feed rate (1-100). Usually 50% or 1%
     const int CoarseIncrement = 10;   // (1-99). Usually 10%.
     const int FineIncrement   = 1;    // (1-99). Usually 1%.

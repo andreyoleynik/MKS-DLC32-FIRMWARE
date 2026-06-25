@@ -18,6 +18,7 @@ typedef enum {
     M_0_1_MM,           // move 0.1mm
     M_1_MM,             // move 1mm
     M_10_MM,            // move 10mm
+    M_50_MM,            // move 50mm
 }GRBL_MOVE_DIS;
 
 typedef enum {
@@ -84,6 +85,7 @@ typedef struct{
     uint8_t                     wifi_back_from;     // 判断wifi界面是从哪里进去的 0=主界面， 1=关于界面
     bool                        wifi_connect_enable;// 允许wifi自动连接
     bool                        popup_1_flag;
+    volatile uint8_t            pending_limit_popup;// 0=нет,1=hard,2=soft: ставит protocol-task, строит LVGL-задача
     bool                        is_need_ref_sd_file;
     uint32_t                    carve_times;        // 雕刻次数
     bool                        is_test_mode = false;       // 是否使用生产模式

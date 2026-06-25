@@ -377,14 +377,17 @@ void protocol_exec_rt_system() {
             // report_feedback_message(Message::CriticalEvent);
 
             // if(ui_move_ctrl.limit_dis_delay_count == 2) {
+            // НЕ строить LVGL-виджет из protocol-task: одновременная мутация дерева LVGL
+            // с lv_task_handler (LVGL-задача) рушит его -> краш в момент лимита во время
+            // задания. Ставим флаг; попап строит LVGL-задача (mks_page_data_updata).
             if(alarm == ExecAlarm::HardLimit) {
                 if(mks_ui_page.mks_ui_page != MKS_UI_TEST) {
-                    draw_global_popup("Hard limit!");
+                    mks_grbl.pending_limit_popup = 1;
                 }
-                
+
             }else if(alarm == ExecAlarm::SoftLimit) {
                 if(mks_ui_page.mks_ui_page != MKS_UI_TEST) {
-                    draw_global_popup("Soft limit!");
+                    mks_grbl.pending_limit_popup = 2;
                 }
             }
             

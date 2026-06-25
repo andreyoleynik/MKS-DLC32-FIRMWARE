@@ -36,7 +36,9 @@
 #    endif
 #    ifdef ENABLE_TELNET
 #        include "TelnetServer.h"
-#        include "RemoteClient.h"
+#        ifdef ENABLE_REMOTE_CLIENT
+#            include "RemoteClient.h"
+#        endif
 #    endif
 #    ifdef ENABLE_NOTIFICATIONS
 #        include "NotificationsService.h"
@@ -99,7 +101,7 @@ namespace WebUI {
         ArduinoOTA.begin();
 #    endif
 #    ifdef ENABLE_MDNS
-        //mDNS работает и в STA, и в AP — http://<hostname>.local в обоих режимах
+        //mDNS работает и в STA, и в AP — http://<hostname>.local в обоих режимах (наша фича)
         if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP) {
             //start mDns
             if (!MDNS.begin(h.c_str())) {
@@ -115,13 +117,15 @@ namespace WebUI {
 #    endif
 #    ifdef ENABLE_TELNET
         Telnet_Server::begin_all();
-        Remote_Client::begin();
+#        ifdef ENABLE_REMOTE_CLIENT
+    Remote_Client::begin();
+#        endif
 #    endif
 #    ifdef ENABLE_NOTIFICATIONS
         notificationsservice.begin();
 #    endif
-        //be sure we are not is mixed mode in setup
-        WiFi.scanNetworks(true);
+        // Do not launch background scan at startup: active scans can destabilize
+        // STA throughput under heavy HTTP traffic. WebUI starts scans on demand.
         return no_error;
     }
     void WiFiServices::end() {
@@ -129,7 +133,9 @@ namespace WebUI {
         notificationsservice.end();
 #    endif
 #    ifdef ENABLE_TELNET
-        Remote_Client::end();
+    #ifdef ENABLE_REMOTE_CLIENT
+    Remote_Client::end();
+    #endif
         Telnet_Server::end_all();
 #    endif
 #    ifdef ENABLE_HTTP
@@ -166,7 +172,9 @@ namespace WebUI {
 #    endif
 #    ifdef ENABLE_TELNET
         Telnet_Server::handle_all();
-        Remote_Client::handle();
+#        ifdef ENABLE_REMOTE_CLIENT
+    Remote_Client::handle();
+#        endif
 #    endif
     }
 }

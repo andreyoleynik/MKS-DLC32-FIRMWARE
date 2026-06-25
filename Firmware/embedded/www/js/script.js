@@ -456,13 +456,13 @@ else if (jsonresponse.status=='3')
     var i5 = 0;
     var interval;
     var x = document.getElementById("prgfw");
-    x.max=40;
+    x.max=10;
     interval = setInterval(function(){
         i5=i5+1;
         var x = document.getElementById("prgfw");
         x.value=i5;
-        document.getElementById('counter').innerHTML=41-i5;
-        if (i5>40)
+        document.getElementById('counter').innerHTML=11-i5;
+        if (i5>10)
             {
             clearInterval(interval);
             location.reload();

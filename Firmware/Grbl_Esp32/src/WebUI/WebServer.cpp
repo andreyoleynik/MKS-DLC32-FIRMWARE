@@ -40,6 +40,11 @@
 #    include <StreamString.h>
 #    include <Update.h>
 #    include <esp_wifi_types.h>
+#    include <esp_partition.h>
+#    include <lwip/sockets.h>
+#    if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+#        include <esp_core_dump.h>
+#    endif
 #    ifdef ENABLE_MDNS
 #        include <ESPmDNS.h>
 #    endif
@@ -50,6 +55,12 @@
 #        include <DNSServer.h>
 
 namespace WebUI {
+#    if defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+    static constexpr bool CORE_DUMP_API_AVAILABLE = false;
+#    else
+    static constexpr bool CORE_DUMP_API_AVAILABLE = true;
+#    endif
+
     const byte DNS_PORT = 53;
     DNSServer  dnsServer;
 }
@@ -65,14 +76,14 @@ namespace WebUI {
     const char PAGE_404[] =
         "<HTML>\n<HEAD>\n<title>Redirecting...</title> \n</HEAD>\n<BODY>\n<CENTER>Unknown page : $QUERY$- you will be "
         "redirected...\n<BR><BR>\nif not redirected, <a href='http://$WEB_ADDRESS$'>click here</a>\n<BR><BR>\n<PROGRESS name='prg' "
-        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=5; \nvar "
-        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>5) "
+        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=10; \nvar "
+        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>10) "
         "\n{\nclearInterval(interval);\nwindow.location.href='/';\n}\n},1000);\n</script>\n</CENTER>\n</BODY>\n</HTML>\n\n";
     const char PAGE_CAPTIVE[] =
         "<HTML>\n<HEAD>\n<title>Captive Portal</title> \n</HEAD>\n<BODY>\n<CENTER>Captive Portal page : $QUERY$- you will be "
         "redirected...\n<BR><BR>\nif not redirected, <a href='http://$WEB_ADDRESS$'>click here</a>\n<BR><BR>\n<PROGRESS name='prg' "
-        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=5; \nvar "
-        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>5) "
+        "id='prg'></PROGRESS>\n\n<script>\nvar i = 0; \nvar x = document.getElementById(\"prg\"); \nx.max=10; \nvar "
+        "interval=setInterval(function(){\ni=i+1; \nvar x = document.getElementById(\"prg\"); \nx.value=i; \nif (i>10) "
         "\n{\nclearInterval(interval);\nwindow.location.href='/';\n}\n},1000);\n</script>\n</CENTER>\n</BODY>\n</HTML>\n\n";
 
     // Error codes for upload
@@ -83,6 +94,42 @@ namespace WebUI {
     const int ESP_ERROR_NOT_ENOUGH_SPACE = 5;
     const int ESP_ERROR_UPLOAD_CANCELLED = 6;
     const int ESP_ERROR_FILE_CLOSE       = 7;
+
+    static const char* sd_state_text(SDState state) {
+        switch (state) {
+            case SDState::Idle: return "Idle";
+            case SDState::NotPresent: return "No SD card";
+            case SDState::Busy: return "Busy printing";
+            case SDState::BusyUploading: return "Busy uploading";
+            case SDState::BusyParsing: return "Busy parsing";
+            default: return "Unknown SD state";
+        }
+    }
+
+    static const char* upload_status_text(uint8_t status) {
+        switch (status) {
+            case UPLOAD_FILE_START: return "START";
+            case UPLOAD_FILE_WRITE: return "WRITE";
+            case UPLOAD_FILE_END: return "END";
+            case UPLOAD_FILE_ABORTED: return "ABORTED";
+            default: return "UNKNOWN";
+        }
+    }
+
+    static const char* sys_state_text(State state) {
+        switch (state) {
+            case State::Idle: return "Idle";
+            case State::Alarm: return "Alarm";
+            case State::CheckMode: return "CheckMode";
+            case State::Homing: return "Homing";
+            case State::Cycle: return "Cycle";
+            case State::Hold: return "Hold";
+            case State::Jog: return "Jog";
+            case State::SafetyDoor: return "SafetyDoor";
+            case State::Sleep: return "Sleep";
+            default: return "Unknown";
+        }
+    }
 
     Web_Server        web_server;
     bool              Web_Server::_setupdone     = false;
@@ -148,6 +195,8 @@ namespace WebUI {
         //web commands
         _webserver->on("/command", HTTP_ANY, handle_web_command);
         _webserver->on("/command_silent", HTTP_ANY, handle_web_command_silent);
+        _webserver->on("/coredump/info", HTTP_GET, handle_coredump_info);
+        _webserver->on("/coredump.bin", HTTP_GET, handle_coredump_download);
 
         //SPIFFS
         _webserver->on("/files", HTTP_ANY, handleFileList, SPIFFSFileupload);
@@ -254,14 +303,20 @@ namespace WebUI {
             if (SPIFFS.exists(pathWithGz)) {
                 path = pathWithGz;
             }
-
+            WiFiClient client = _webserver->client();
+            client.setNoDelay(true);
             File file = SPIFFS.open(path, FILE_READ);
+            if (!file) {
+                _webserver->send(500, "text/plain", "WebUI open failed");
+                return;
+            }
             _webserver->streamFile(file, contentType);
             file.close();
             return;
         }
 
         //if no lets launch the default content
+        grbl_send(CLIENT_ALL, "[MSG:WebUI files missing in SPIFFS]\r\n");
         _webserver->sendHeader("Content-Encoding", "gzip");
         _webserver->send_P(200, "text/html", PAGE_NOFILES, PAGE_NOFILES_SIZE);
     }
@@ -309,7 +364,7 @@ namespace WebUI {
                         if ((v == -1) || (v == 0)) {
                             done = true;
                         } else {
-                            _webserver->client().write(buf, 1024);
+                            _webserver->client().write(buf, v);
                             i += v;
                         }
 
@@ -336,7 +391,13 @@ namespace WebUI {
             if (SPIFFS.exists(pathWithGz)) {
                 path = pathWithGz;
             }
+            WiFiClient client = _webserver->client();
+            client.setNoDelay(true);
             File file = SPIFFS.open(path, FILE_READ);
+            if (!file) {
+                _webserver->send(404, "text/plain", "Not found");
+                return;
+            }
             _webserver->streamFile(file, contentType);
             file.close();
             return;
@@ -372,7 +433,13 @@ namespace WebUI {
                 if (SPIFFS.exists(pathWithGz)) {
                     path = pathWithGz;
                 }
+                WiFiClient client = _webserver->client();
+                client.setNoDelay(true);
                 File file = SPIFFS.open(path, FILE_READ);
+                if (!file) {
+                    _webserver->send(404, "text/plain", "Not found");
+                    return;
+                }
                 _webserver->streamFile(file, contentType);
                 file.close();
 
@@ -462,12 +529,14 @@ namespace WebUI {
             _webserver->send(200, "text/plain", "Invalid command");
             return;
         }
-        //if it is internal command [ESPXXX]<parameter>
-        cmd.trim();
-        int ESPpos = cmd.indexOf("[ESP");
+        // Keep raw bytes (e.g. 0x18) intact for realtime commands.
+        // Use a trimmed copy only for internal [ESPxxx] parsing.
+        String espCmd = cmd;
+        espCmd.trim();
+        int ESPpos = espCmd.indexOf("[ESP");
         if (ESPpos > -1) {
             char line[256];
-            strncpy(line, cmd.c_str(), 255);
+            strncpy(line, espCmd.c_str(), 255);
             ESPResponseStream* espresponse = silent ? NULL : new ESPResponseStream(_webserver);
             Error              err         = system_execute_line(line, espresponse, auth_level);
             String             answer;
@@ -493,14 +562,22 @@ namespace WebUI {
                 _webserver->send(401, "text/plain", "Authentication failed!\n");
                 return;
             }
-            //Instead of send several commands one by one by web  / send full set and split here
-            String      scmd;
-            bool hasError =false;
-            uint8_t     sindex = 0;
-            // TODO Settings - this is very inefficient.  get_Splited_Value() is O(n^2)
-            // when it could easily be O(n).  Also, it would be just as easy to push
-            // the entire string into Serial2Socket and pull off lines from there.
-            for (uint8_t sindex = 0; (scmd = get_Splited_Value(cmd, '\n', sindex)) != ""; sindex++) {
+            // Split once in linear time to avoid O(n^2) temporary String churn.
+            bool hasError = false;
+            int  lineStart = 0;
+            int  cmdLen    = cmd.length();
+            for (int i = 0; i <= cmdLen; i++) {
+                if (i != cmdLen && cmd[i] != '\n') {
+                    continue;
+                }
+
+                int lineLen = i - lineStart;
+                if (lineLen <= 0) {
+                    lineStart = i + 1;
+                    continue;
+                }
+
+                String scmd = cmd.substring(lineStart, i);
                 // 0xC2 is an HTML encoding prefix that, in UTF-8 mode,
                 // precede 0x90 and 0xa0-0bf, which are GRBL realtime commands.
                 // There are other encodings for 0x91-0x9f, so I am not sure
@@ -517,9 +594,135 @@ namespace WebUI {
                 }
                 if (!Serial2Socket.push(scmd.c_str())) {
                     hasError = true;
+                    break;  // RX-кольцо переполнено: не «дырявить» поток дальше — клиент увидит Error и дошлёт остаток
                 }
+
+                lineStart = i + 1;
             }
             _webserver->send(200, "text/plain", hasError?"Error":"");
+        }
+    }
+
+    void Web_Server::handle_coredump_info() {
+        if (is_authenticated() == AuthenticationLevel::LEVEL_GUEST) {
+            _webserver->send(401, "application/json", "{\"status\":\"error\",\"message\":\"Authentication failed\"}");
+            return;
+        }
+
+        size_t    image_addr = 0;
+        size_t    image_size = 0;
+        esp_err_t err        = ESP_ERR_NOT_SUPPORTED;
+        if (CORE_DUMP_API_AVAILABLE) {
+    #if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+            err = esp_core_dump_image_get(&image_addr, &image_size);
+    #endif
+        }
+        bool      has_image  = (err == ESP_OK) && (image_size > 0);
+
+        const esp_partition_t* core_part =
+            esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+        const char* configured_to_flash = "false";
+#if defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH)
+        configured_to_flash             = "true";
+#endif
+
+        char json[384];
+        if (core_part) {
+            snprintf(json,
+                 sizeof(json),
+                 "{\"status\":\"ok\",\"coreDumpApiAvailable\":%s,\"configuredToFlash\":%s,\"partitionPresent\":true,\"imageAvailable\":%s,\"espErr\":%d,\"address\":%u,\"size\":%u,\"partitionAddress\":%u,\"partitionSize\":%u}",
+                 CORE_DUMP_API_AVAILABLE ? "true" : "false",
+                 configured_to_flash,
+                 has_image ? "true" : "false",
+                 (int)err,
+                 (unsigned)image_addr,
+                 (unsigned)image_size,
+                 (unsigned)core_part->address,
+                 (unsigned)core_part->size);
+        } else {
+            snprintf(json,
+                 sizeof(json),
+                 "{\"status\":\"ok\",\"coreDumpApiAvailable\":%s,\"configuredToFlash\":%s,\"partitionPresent\":false,\"imageAvailable\":%s,\"espErr\":%d,\"address\":%u,\"size\":%u}",
+                 CORE_DUMP_API_AVAILABLE ? "true" : "false",
+                 configured_to_flash,
+                 has_image ? "true" : "false",
+                 (int)err,
+                 (unsigned)image_addr,
+                 (unsigned)image_size);
+        }
+
+        _webserver->send(200, "application/json", json);
+    }
+
+    void Web_Server::handle_coredump_download() {
+        if (is_authenticated() == AuthenticationLevel::LEVEL_GUEST) {
+            _webserver->send(401, "text/plain", "Authentication failed");
+            return;
+        }
+
+        if (!CORE_DUMP_API_AVAILABLE) {
+            _webserver->send(501, "text/plain", "Core dump is disabled in this firmware build");
+            return;
+        }
+
+        size_t    image_addr = 0;
+        size_t    image_size = 0;
+    #if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
+        esp_err_t err        = esp_core_dump_image_get(&image_addr, &image_size);
+    #else
+        esp_err_t err        = ESP_ERR_NOT_SUPPORTED;
+    #endif
+        if ((err != ESP_OK) || (image_size == 0)) {
+            _webserver->send(404, "text/plain", "No core dump image in flash");
+            return;
+        }
+
+        const esp_partition_t* core_part =
+            esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+        if (!core_part) {
+            _webserver->send(500, "text/plain", "coredump partition not found");
+            return;
+        }
+
+        if ((image_addr < core_part->address) || ((image_addr + image_size) > (core_part->address + core_part->size))) {
+            _webserver->send(500, "text/plain", "core dump image outside coredump partition");
+            return;
+        }
+
+        size_t offset = 0;
+        if (_webserver->hasArg("offset")) {
+            offset = strtoul(_webserver->arg("offset").c_str(), NULL, 10);
+        }
+        if (offset >= image_size) {
+            _webserver->send(416, "text/plain", "offset out of range");
+            return;
+        }
+
+        size_t length = image_size - offset;
+        if (_webserver->hasArg("length")) {
+            size_t requested = strtoul(_webserver->arg("length").c_str(), NULL, 10);
+            if ((requested > 0) && (requested < length)) {
+                length = requested;
+            }
+        }
+
+        size_t part_offset = (image_addr - core_part->address) + offset;
+
+        _webserver->sendHeader("Content-Disposition", "attachment; filename=\"coredump.bin\"");
+        _webserver->setContentLength(length);
+        _webserver->send(200, "application/octet-stream", "");
+
+        uint8_t buf[1024];
+        size_t  sent = 0;
+        while (sent < length) {
+            size_t chunk = (length - sent) > sizeof(buf) ? sizeof(buf) : (length - sent);
+            if (esp_partition_read(core_part, part_offset + sent, buf, chunk) != ESP_OK) {
+                grbl_send(CLIENT_SERIAL, "[MSG:Core dump read failed]\r\n");
+                break;
+            }
+            _webserver->client().write(buf, chunk);
+            sent += chunk;
+            vTaskDelay(1 / portTICK_RATE_MS);
         }
     }
 
@@ -543,8 +746,7 @@ namespace WebUI {
             ClearAuthIP(_webserver->client().remoteIP(), sessionID.c_str());
             _webserver->sendHeader("Set-Cookie", "ESPSESSIONID=0");
             _webserver->sendHeader("Cache-Control", "no-cache");
-            String buffer2send = "{\"status\":\"Ok\",\"authentication_lvl\":\"guest\"}";
-            _webserver->send(code, "application/json", buffer2send);
+            _webserver->send(code, "application/json", "{\"status\":\"Ok\",\"authentication_lvl\":\"guest\"}");
             //_webserver->client().stop();
             return;
         }
@@ -662,11 +864,13 @@ namespace WebUI {
                 smsg = "Ok";
             }
 
-            //build  JSON
-            String buffer2send = "{\"status\":\"" + smsg + "\",\"authentication_lvl\":\"";
-            buffer2send += auths;
-            buffer2send += "\"}";
-            _webserver->send(code, "application/json", buffer2send);
+            char json[160];
+            snprintf(json,
+                     sizeof(json),
+                     "{\"status\":\"%s\",\"authentication_lvl\":\"%s\"}",
+                     smsg.c_str(),
+                     auths.c_str());
+            _webserver->send(code, "application/json", json);
         } else {
             if (auth_level != AuthenticationLevel::LEVEL_GUEST) {
                 String cookie = _webserver->header("Cookie");
@@ -681,12 +885,13 @@ namespace WebUI {
                     }
                 }
             }
-            String buffer2send = "{\"status\":\"200\",\"authentication_lvl\":\"";
-            buffer2send += auths;
-            buffer2send += "\",\"user\":\"";
-            buffer2send += sUser;
-            buffer2send += "\"}";
-            _webserver->send(code, "application/json", buffer2send);
+            char json[192];
+            snprintf(json,
+                     sizeof(json),
+                     "{\"status\":\"200\",\"authentication_lvl\":\"%s\",\"user\":\"%s\"}",
+                     auths.c_str(),
+                     sUser.c_str());
+            _webserver->send(code, "application/json", json);
         }
 #    else
         _webserver->sendHeader("Cache-Control", "no-cache");
@@ -817,14 +1022,17 @@ namespace WebUI {
             }
         }
 
-        String jsonfile = "{";
         String ptmp     = path;
         if ((path != "/") && (path[path.length() - 1] = '/')) {
             ptmp = path.substring(0, path.length() - 1);
         }
 
         File dir = SPIFFS.open(ptmp);
-        jsonfile += "\"files\":[";
+        _webserver->setContentLength(CONTENT_LENGTH_UNKNOWN);
+        _webserver->sendHeader("Content-Type", "application/json");
+        _webserver->sendHeader("Cache-Control", "no-cache");
+        _webserver->send(200);
+        _webserver->sendContent("{\"files\":[");
         bool   firstentry = true;
         String subdirlist = "";
         File   fileparsed = dir.openNextFile();
@@ -832,8 +1040,14 @@ namespace WebUI {
             String filename  = fileparsed.name();
             String size      = "";
             bool   addtolist = true;
-            //remove path from name
-            filename = filename.substring(path.length(), filename.length());
+            // Remove path prefix from name. For root path ('/'), keep the full filename.
+            if (path == "/") {
+                if (filename.startsWith("/")) {
+                    filename = filename.substring(1, filename.length());
+                }
+            } else {
+                filename = filename.substring(path.length(), filename.length());
+            }
             //check if file or subfile
             if (filename.indexOf("/") > -1) {
                 //Do not rely on "/." to define directory as SPIFFS upload won't create it but directly files
@@ -861,36 +1075,42 @@ namespace WebUI {
             }
             if (addtolist) {
                 if (!firstentry) {
-                    jsonfile += ",";
+                    _webserver->sendContent(",");
                 } else {
                     firstentry = false;
                 }
-                jsonfile += "{";
-                jsonfile += "\"name\":\"";
-                jsonfile += filename;
-                jsonfile += "\",\"size\":\"";
-                jsonfile += size;
-                jsonfile += "\"";
-                jsonfile += "}";
+                _webserver->sendContent("{\"name\":\"");
+                _webserver->sendContent(filename);
+                _webserver->sendContent("\",\"size\":\"");
+                _webserver->sendContent(size);
+                _webserver->sendContent("\"}");
             }
             fileparsed = dir.openNextFile();
         }
-        jsonfile += "],";
-        jsonfile += "\"path\":\"" + path + "\",";
-        jsonfile += "\"status\":\"" + status + "\",";
+        _webserver->sendContent("],");
+        _webserver->sendContent("\"path\":\"");
+        _webserver->sendContent(path);
+        _webserver->sendContent("\",\"status\":\"");
+        _webserver->sendContent(status);
+        _webserver->sendContent("\",");
         size_t totalBytes;
         size_t usedBytes;
         totalBytes = SPIFFS.totalBytes();
         usedBytes  = SPIFFS.usedBytes();
-        jsonfile += "\"total\":\"" + ESPResponseStream::formatBytes(totalBytes) + "\",";
-        jsonfile += "\"used\":\"" + ESPResponseStream::formatBytes(usedBytes) + "\",";
-        jsonfile.concat(F("\"occupation\":\""));
-        jsonfile += String(100 * usedBytes / totalBytes);
-        jsonfile += "\"";
-        jsonfile += "}";
+        String totalStr = ESPResponseStream::formatBytes(totalBytes);
+        String usedStr  = ESPResponseStream::formatBytes(usedBytes);
+        _webserver->sendContent("\"total\":\"");
+        _webserver->sendContent(totalStr);
+        _webserver->sendContent("\",\"used\":\"");
+        _webserver->sendContent(usedStr);
+        _webserver->sendContent("\",\"occupation\":\"");
+        char occupation[16];
+        unsigned occPercent = (totalBytes > 0) ? (unsigned)(100 * usedBytes / totalBytes) : 0U;
+        snprintf(occupation, sizeof(occupation), "%u", occPercent);
+        _webserver->sendContent(occupation);
+        _webserver->sendContent("\"}");
+        _webserver->sendContent("");
         path = "";
-        _webserver->sendHeader("Cache-Control", "no-cache");
-        _webserver->send(200, "application/json", jsonfile);
     }
 
     //push error code and message to websocket
@@ -1060,9 +1280,8 @@ namespace WebUI {
             return;
         }
 
-        String jsonfile = "{\"status\":\"";
-        jsonfile += String(int32_t(uint8_t(_upload_status)));
-        jsonfile += "\"}";
+        char jsonfile[32];
+        snprintf(jsonfile, sizeof(jsonfile), "{\"status\":\"%d\"}", (int)uint8_t(_upload_status));
 
         //send status
         _webserver->sendHeader("Cache-Control", "no-cache");
@@ -1081,6 +1300,8 @@ namespace WebUI {
     void Web_Server::WebUpdateUpload() {
         static size_t   last_upload_update;
         static uint32_t maxSketchSpace = 0;
+        static size_t   otaSketchSpace = 0;
+        static uint32_t firmwareSize    = 0;
 
         //only admin can update FW
         if (is_authenticated() != AuthenticationLevel::LEVEL_ADMIN) {
@@ -1098,7 +1319,8 @@ namespace WebUI {
                     _upload_status     = UploadStatusType::ONGOING;
                     String sizeargname = upload.filename + "S";
                     if (_webserver->hasArg(sizeargname)) {
-                        maxSketchSpace = _webserver->arg(sizeargname).toInt();
+                        firmwareSize = _webserver->arg(sizeargname).toInt();
+                        maxSketchSpace = firmwareSize;
                     }
                     //check space
                     size_t flashsize = 0;
@@ -1106,18 +1328,19 @@ namespace WebUI {
                         const esp_partition_t* partition = esp_ota_get_next_update_partition(NULL);
                         if (partition) {
                             flashsize = partition->size;
+                            otaSketchSpace = partition->size;
                         }
                     }
                     if (flashsize < maxSketchSpace) {
                         pushError(ESP_ERROR_NOT_ENOUGH_SPACE, "Upload rejected, not enough space");
                         _upload_status = UploadStatusType::FAILED;
-                        grbl_send(CLIENT_ALL, "[MSG:Update cancelled]\r\n");
+                        grbl_sendf(CLIENT_ALL, "[MSG:Update cancelled OTA:%u FW:%u]\r\n", uint32_t(otaSketchSpace), uint32_t(firmwareSize));
                     }
                     if (_upload_status != UploadStatusType::FAILED) {
                         last_upload_update = 0;
                         if (!Update.begin()) {  //start with max available size
                             _upload_status = UploadStatusType::FAILED;
-                            grbl_send(CLIENT_ALL, "[MSG:Update cancelled]\r\n");
+                            grbl_sendf(CLIENT_ALL, "[MSG:Update cancelled OTA:%u FW:%u]\r\n", uint32_t(otaSketchSpace), uint32_t(firmwareSize));
                             pushError(ESP_ERROR_NOT_ENOUGH_SPACE, "Upload rejected, not enough space");
                         } else {
                             grbl_send(CLIENT_ALL, "\n[MSG:Update 0%]\r\n");
@@ -1196,7 +1419,7 @@ namespace WebUI {
             if (!entry) {
                 break;
             }
-            String entryPath = entry.name();
+            String entryPath = entry.path();
             if (entry.isDirectory()) {
                 entry.close();
                 if (!deleteRecursive(entryPath)) {
@@ -1235,10 +1458,12 @@ namespace WebUI {
         uint64_t usedspace  = 0;
         SDState  state      = get_sd_state(true);
         if (state != SDState::Idle) {
-            String status = "{\"status\":\"";
-            status += state == SDState::NotPresent ? "No SD Card\"}" : "Busy\"}";
             _webserver->sendHeader("Cache-Control", "no-cache");
-            _webserver->send(200, "application/json", status);
+            if (state == SDState::NotPresent) {
+                _webserver->send(200, "application/json", "{\"status\":\"No SD Card\"}");
+            } else {
+                _webserver->send(200, "application/json", "{\"status\":\"Busy\"}");
+            }
             return;
         }
         set_sd_state(SDState::BusyParsing);
@@ -1321,22 +1546,24 @@ namespace WebUI {
             list_files = false;
         }
 
-        // TODO Settings - consider using the JSONEncoder class
-        String jsonfile = "{";
-        jsonfile += "\"files\":[";
-
         if (path != "/") {
             path = path.substring(0, path.length() - 1);
         }
         if (path != "/" && !SD.exists(path)) {
-            String s = "{\"status\":\" ";
-            s += path;
-            s += " does not exist on SD Card\"}";
-            _webserver->send(200, "application/json", s);
+            char notFound[256];
+            snprintf(notFound, sizeof(notFound), "{\"status\":\" %s does not exist on SD Card\"}", path.c_str());
+            _webserver->send(200, "application/json", notFound);
             SD.end();
             set_sd_state(SDState::Idle);
             return;
         }
+
+        _webserver->setContentLength(CONTENT_LENGTH_UNKNOWN);
+        _webserver->sendHeader("Content-Type", "application/json");
+        _webserver->sendHeader("Cache-Control", "no-cache");
+        _webserver->send(200);
+        _webserver->sendContent("{\"files\":[");
+
         if (list_files) {
             File dir = SD.open(path);
             if (!dir.isDirectory()) {
@@ -1348,34 +1575,31 @@ namespace WebUI {
             while (entry) {
                 COMMANDS::wait(1);
                 if (i > 0) {
-                    jsonfile += ",";
+                    _webserver->sendContent(",");
                 }
-                jsonfile += "{\"name\":\"";
+                _webserver->sendContent("{\"name\":\"");
                 String tmpname = entry.name();
                 int    pos     = tmpname.lastIndexOf("/");
                 tmpname        = tmpname.substring(pos + 1);
-                jsonfile += tmpname;
-                jsonfile += "\",\"shortname\":\"";  //No need here
-                jsonfile += tmpname;
-                jsonfile += "\",\"size\":\"";
+                _webserver->sendContent(tmpname);
+                _webserver->sendContent("\",\"shortname\":\"");  //No need here
+                _webserver->sendContent(tmpname);
+                _webserver->sendContent("\",\"size\":\"");
                 if (entry.isDirectory()) {
-                    jsonfile += "-1";
+                    _webserver->sendContent("-1");
                 } else {
                     // files have sizes, directories do not
-                    jsonfile += ESPResponseStream::formatBytes(entry.size());
+                    _webserver->sendContent(ESPResponseStream::formatBytes(entry.size()));
                 }
-                jsonfile += "\",\"datetime\":\"";
+                _webserver->sendContent("\",\"datetime\":\"");
                 //TODO - can be done later
-                jsonfile += "\"}";
+                _webserver->sendContent("\"}");
                 i++;
                 entry.close();
                 entry = dir.openNextFile();
             }
             dir.close();
         }
-        jsonfile += "],\"path\":\"";
-        jsonfile += path + "\",";
-        jsonfile += "\"total\":\"";
         String stotalspace, susedspace;
         //SDCard are in GB or MB but no less
         totalspace  = SD.totalBytes();
@@ -1391,26 +1615,28 @@ namespace WebUI {
         if (occupedspace <= 1) {
             occupedspace = 1;
         }
+        _webserver->sendContent("],\"path\":\"");
+        _webserver->sendContent(path);
+        _webserver->sendContent("\",\"total\":\"");
         if (totalspace) {
-            jsonfile += stotalspace;
+            _webserver->sendContent(stotalspace);
         } else {
-            jsonfile += "-1";
+            _webserver->sendContent("-1");
         }
-        jsonfile += "\",\"used\":\"";
-        jsonfile += susedspace;
-        jsonfile += "\",\"occupation\":\"";
+        _webserver->sendContent("\",\"used\":\"");
+        _webserver->sendContent(susedspace);
+        _webserver->sendContent("\",\"occupation\":\"");
         if (totalspace) {
-            jsonfile += String(occupedspace);
+            char occ[16];
+            snprintf(occ, sizeof(occ), "%u", (unsigned)occupedspace);
+            _webserver->sendContent(occ);
         } else {
-            jsonfile += "-1";
+            _webserver->sendContent("-1");
         }
-        jsonfile += "\",";
-        jsonfile += "\"mode\":\"direct\",";
-        jsonfile += "\"status\":\"";
-        jsonfile += sstatus + "\"";
-        jsonfile += "}";
-        _webserver->sendHeader("Cache-Control", "no-cache");
-        _webserver->send(200, "application/json", jsonfile);
+        _webserver->sendContent("\",\"mode\":\"direct\",\"status\":\"");
+        _webserver->sendContent(sstatus);
+        _webserver->sendContent("\"}");
+        _webserver->sendContent("");
         set_sd_state(SDState::Idle);
         SD.end();
     }
@@ -1437,11 +1663,33 @@ namespace WebUI {
                     if (filename[0] != '/') {
                         filename = "/" + upload.filename;
                     }
+                    // Recover stale SD print lock if a previous job was interrupted.
+                    SDState sdState = get_sd_state(true);
+                    if ((sdState == SDState::BusyPrinting) &&
+                        (sys.state != State::Cycle) &&
+                        (sys.state != State::Hold) &&
+                        (sys.state != State::Jog) &&
+                        (sys.state != State::Homing)) {
+                        closeFile();
+                        sdState = get_sd_state(true);
+                    }
+                    // Recover stale upload/listing lock if previous HTTP operation ended unexpectedly.
+                    if ((sdState == SDState::BusyUploading) || (sdState == SDState::BusyParsing)) {
+                        set_sd_state(SDState::Idle);
+                        SD.end();
+                        sdState = get_sd_state(true);
+                    }
                     //check if SD Card is available
-                    if (get_sd_state(true) != SDState::Idle) {
+                    if (sdState != SDState::Idle) {
                         _upload_status = UploadStatusType::FAILED;
-                        grbl_send(CLIENT_ALL, "[MSG:Upload cancelled]\r\n");
-                        pushError(ESP_ERROR_UPLOAD_CANCELLED, "Upload cancelled");
+                        String error_text = "Upload cancelled: status=START, file=";
+                        error_text += filename;
+                        error_text += ", sd_state=";
+                        error_text += sd_state_text(sdState);
+                        error_text += ", sys_state=";
+                        error_text += sys_state_text(sys.state);
+                        grbl_sendf(CLIENT_ALL, "[MSG:%s]\r\n", error_text.c_str());
+                        pushError(ESP_ERROR_UPLOAD_CANCELLED, error_text.c_str());
 
                     } else {
                         set_sd_state(SDState::BusyUploading);
@@ -1525,8 +1773,16 @@ namespace WebUI {
 
                 } else {  //Upload cancelled
                     _upload_status = UploadStatusType::FAILED;
+                    SDState current_state = get_sd_state(false);
+                    String  error_text    = "Upload cancelled: status=";
+                    error_text += upload_status_text(upload.status);
+                    error_text += ", file=";
+                    error_text += filename;
+                    error_text += ", sd_state=";
+                    error_text += sd_state_text(current_state);
+                    grbl_sendf(CLIENT_ALL, "%s\r\n", error_text.c_str());
+                    pushError(ESP_ERROR_UPLOAD_CANCELLED, error_text.c_str());
                     set_sd_state(SDState::Idle);
-                    grbl_send(CLIENT_ALL, "[MSG:Upload failed]\r\n");
                     if (sdUploadFile) {
                         sdUploadFile.close();
                     }
@@ -1563,10 +1819,13 @@ namespace WebUI {
         if (_socket_server && _setupdone) {
             _socket_server->loop();
         }
-        if ((millis() - timeout) > 10000 && _socket_server) {
-            String s = "PING:";
-            s += String(_id_connection);
-            _socket_server->broadcastTXT(s);
+        if ((millis() - timeout) > 10000 && _socket_server && (_socket_server->connectedClients(false) > 0)) {
+            // In single-WebUI mode heartbeat includes ACTIVE id for legacy UI behavior.
+            if (!webui_secondary_enable || (webui_secondary_enable->get() == 0)) {
+                char pingMsg[24];
+                snprintf(pingMsg, sizeof(pingMsg), "PING:%ld", _id_connection);
+                _socket_server->broadcastTXT(pingMsg);
+            }
             timeout = millis();
         }
     }
@@ -1575,17 +1834,23 @@ namespace WebUI {
         switch (type) {
             case WStype_DISCONNECTED:
                 //USE_SERIAL.printf("[%u] Disconnected!\n", num);
+                if (_id_connection == num) {
+                    _id_connection = -1;
+                }
                 grbl_send(CLIENT_SERIAL , "WebUI Disconnected!\n");
                 break;
             case WStype_CONNECTED: {
                 IPAddress ip = _socket_server->remoteIP(num);
                 //USE_SERIAL.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-                String s = "CURRENT_ID:" + String(num);
+                char wsMsg[32];
+                snprintf(wsMsg, sizeof(wsMsg), "CURRENT_ID:%u", num);
                 // send message to client
                 _id_connection = num;
-                _socket_server->sendTXT(_id_connection, s);
-                s = "ACTIVE_ID:" + String(_id_connection);
-                _socket_server->broadcastTXT(s);
+                _socket_server->sendTXT(_id_connection, wsMsg);
+                if (!webui_secondary_enable || (webui_secondary_enable->get() == 0)) {
+                    snprintf(wsMsg, sizeof(wsMsg), "ACTIVE_ID:%ld", _id_connection);
+                    _socket_server->broadcastTXT(wsMsg);
+                }
 
                 grbl_send(CLIENT_SERIAL , "WebUI connected!\n");
             } break;

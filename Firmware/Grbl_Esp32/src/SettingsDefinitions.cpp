@@ -23,6 +23,7 @@ AxisMaskSetting* stallguard_debug_mask;
 
 IntSetting* language_select;
 FlagSetting* beep_status; // mks-fix
+FlagSetting* sculpture_list_mode;
 
 
 
@@ -48,7 +49,10 @@ FloatSetting*    homing_feed_rate;
 FloatSetting*    homing_seek_rate;
 FloatSetting*    homing_debounce;
 FloatSetting*    homing_pulloff;
-AxisMaskSetting* homing_cycle[MAX_N_AXIS];
+AxisMaskSetting* homing_cycle[MAX_AXES];
+FloatSetting*    homing_pulloff_x;
+FloatSetting*    homing_pulloff_y;
+FloatSetting*    homing_pulloff_z;
 FloatSetting*    spindle_pwm_freq;
 FloatSetting*    rpm_max;
 FloatSetting*    rpm_min;
@@ -232,7 +236,7 @@ static const char* makeGrblName(int axisNum, int base) {
     // if (axisNum > 2) return NULL;
     char buf[4];
     snprintf(buf, 4, "%d", axisNum + base);
-    char* retval = (char*)malloc(strlen(buf));
+    char* retval = (char*)malloc(strlen(buf) + 1);
     return strcpy(retval, buf);
 }
 
@@ -274,9 +278,9 @@ void make_settings() {
     x_axis_settings = axis_settings[X_AXIS];
     y_axis_settings = axis_settings[Y_AXIS];
     z_axis_settings = axis_settings[Z_AXIS];
-    a_axis_settings = axis_settings[A_AXIS];
-    b_axis_settings = axis_settings[B_AXIS];
-    c_axis_settings = axis_settings[C_AXIS];
+    a_axis_settings = (MAX_N_AXIS > A_AXIS) ? axis_settings[A_AXIS] : nullptr;
+    b_axis_settings = (MAX_N_AXIS > B_AXIS) ? axis_settings[B_AXIS] : nullptr;
+    c_axis_settings = (MAX_N_AXIS > C_AXIS) ? axis_settings[C_AXIS] : nullptr;
     for (axis = MAX_N_AXIS - 1; axis >= 0; axis--) {
         def          = &axis_defaults[axis];
         auto setting = new IntSetting(
@@ -342,6 +346,7 @@ void make_settings() {
 
     language_select              = new IntSetting(GRBL, WG, "40", "Language", DEFAULT_LANGUAGE_STATUS, 0, 2);
     beep_status                  = new FlagSetting(GRBL, WG, "38", "beep_status", DEFAULT_BEEP_STATUS);
+    sculpture_list_mode          = new FlagSetting(GRBL, WG, "41", "sculpture_list_mode", DEFAULT_SCULPTURE_LIST_MODE);
     
     // Spindle Settings
     spindle_type =
@@ -383,6 +388,9 @@ void make_settings() {
     spindle_pwm_freq = new FloatSetting(GRBL, WG, "28", "Spindle/PWM/Frequency", DEFAULT_SPINDLE_FREQ, 0, 100000, checkSpindleChange);  // (0-100k  100000)
     
     homing_pulloff      = new FloatSetting(GRBL, WG, "27", "Homing/Pulloff", DEFAULT_HOMING_PULLOFF, 0, 1000);
+    homing_pulloff_x    = new FloatSetting(GRBL, WG, "271", "Homing/Pulloff/X", -1.0, -1000, 1000);
+    homing_pulloff_y    = new FloatSetting(GRBL, WG, "272", "Homing/Pulloff/Y", -1.0, -1000, 1000);
+    homing_pulloff_z    = new FloatSetting(GRBL, WG, "273", "Homing/Pulloff/Z", -1.0, -1000, 1000);
     homing_debounce     = new FloatSetting(GRBL, WG, "26", "Homing/Debounce", DEFAULT_HOMING_DEBOUNCE_DELAY, 0, 10000);
     homing_seek_rate    = new FloatSetting(GRBL, WG, "25", "Homing/Seek", DEFAULT_HOMING_SEEK_RATE, 0, 10000);
     homing_feed_rate    = new FloatSetting(GRBL, WG, "24", "Homing/Feed", DEFAULT_HOMING_FEED_RATE, 0, 10000);

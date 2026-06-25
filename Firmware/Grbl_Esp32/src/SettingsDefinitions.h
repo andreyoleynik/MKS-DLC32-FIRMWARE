@@ -25,10 +25,11 @@ extern AxisMaskSetting* step_invert_mask;
 extern AxisMaskSetting* dir_invert_mask;
 extern AxisMaskSetting* homing_dir_mask;
 extern AxisMaskSetting* homing_squared_axes;
-extern AxisMaskSetting* homing_cycle[MAX_N_AXIS];
+extern AxisMaskSetting* homing_cycle[MAX_AXES];
 
 extern IntSetting* language_select;
 extern FlagSetting* beep_status;
+extern FlagSetting* sculpture_list_mode;
 
 extern FlagSetting* step_enable_invert;
 extern FlagSetting* limit_invert;
@@ -48,6 +49,9 @@ extern FloatSetting* homing_feed_rate;
 extern FloatSetting* homing_seek_rate;
 extern FloatSetting* homing_debounce;
 extern FloatSetting* homing_pulloff;
+extern FloatSetting* homing_pulloff_x;
+extern FloatSetting* homing_pulloff_y;
+extern FloatSetting* homing_pulloff_z;
 extern FloatSetting* spindle_pwm_freq;
 extern FloatSetting* rpm_max;
 extern FloatSetting* rpm_min;

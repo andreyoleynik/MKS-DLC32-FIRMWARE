@@ -152,6 +152,7 @@ public:
     Error               setStringValue(String s) { return setStringValue(s.c_str()); }
     virtual const char* getStringValue() = 0;
     virtual const char* getCompatibleValue() { return getStringValue(); }
+    virtual const char* getBackupValue() { return getCompatibleValue(); }
     virtual const char* getDefaultString() = 0;
 };
 
@@ -257,6 +258,7 @@ private:
     float _defaultValue;
     float _currentValue;
     float _storedValue;
+    bool  _hasStoredValue;
     float _minValue;
     float _maxValue;
 
@@ -290,6 +292,7 @@ public:
     const char* getDefaultString();
 
     float get() { return _currentValue; }
+    bool  hasStoredValue() { return _hasStoredValue; }
 };
 
 class StringSetting : public Setting {
@@ -322,6 +325,7 @@ public:
     Error       setStringValue(char* value);
     Error       mks_setStringValue(char* s);
     const char* getStringValue();
+    const char* getBackupValue() { return get(); }
     const char* getDefaultString();
 
     const char* get() { return _currentValue.c_str(); }

@@ -10,8 +10,8 @@
 #define CONTROL_EN              "Control"           
 #define SCULPTURE_EN            "Sculpture"         
 #define TOOL_EN                 "Tool"          
-#define MPOS_EN                 "Mechanical coordinat"          
-#define WPOS_EN                 "Working coordinates"
+#define MPOS_EN                 "Mechanical coords"          
+#define WPOS_EN                 "Working coords"
 #define WIFI_CONNECT_EN   	    "Connect"
 #define WIFI_DISCONNECT_EN	    "Disconnect"
 

@@ -133,6 +133,33 @@ void reset_mc_config(void) {
     client_reset_read_buffer(CLIENT_ALL);
 }
 
+static const char* reset_reason_text(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_POWERON:
+            return "Power-on";
+        case ESP_RST_EXT:
+            return "External pin";
+        case ESP_RST_SW:
+            return "Software";
+        case ESP_RST_WDT:
+            return "Watchdog";
+        case ESP_RST_DEEPSLEEP:
+            return "Deep sleep";
+        case ESP_RST_BROWNOUT:
+            return "Brownout";
+        case ESP_RST_SDIO:
+            return "SDIO";
+        case ESP_RST_PANIC:
+            return "Panic/Crash";
+        case ESP_RST_INT_WDT:
+            return "Interrupt watchdog";
+        case ESP_RST_TASK_WDT:
+            return "Task watchdog";
+        default:
+            return "Unknown";
+    }
+}
+
 void _mc_task_init(void) {
 
     mks_grbl_parg_init();
@@ -190,6 +217,22 @@ static void reset_variables() {
     plan_sync_position();
     gc_sync_position();
     report_init_message(CLIENT_ALL);
+
+    static bool boot_diag_printed = false;
+    if (!boot_diag_printed) {
+        boot_diag_printed = true;
+        esp_reset_reason_t reason = esp_reset_reason();
+        grbl_msg_sendf(CLIENT_SERIAL,
+                       MsgLevel::Info,
+                       "Reset reason: %s (%d)",
+                       reset_reason_text(reason),
+                       (int)reason);
+        grbl_msg_sendf(CLIENT_SERIAL,
+                       MsgLevel::Info,
+                       "Heap free/min: %u/%u",
+                       (unsigned)ESP.getFreeHeap(),
+                       (unsigned)xPortGetMinimumEverFreeHeapSize());
+    }
 
     // used to keep track of a jog command sent to mc_line() so we can cancel it.
     // this is needed if a jogCancel comes along after we have already parsed a jog and it is in-flight.

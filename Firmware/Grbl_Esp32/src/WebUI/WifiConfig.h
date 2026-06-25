@@ -56,6 +56,7 @@ namespace WebUI {
     static const char* DEFAULT_AP_IP             = "192.168.4.1";
     static const char* DEFAULT_AP_MK             = "255.255.255.0";
     static const int   DEFAULT_AP_CHANNEL        = 1;
+    static const int   DEFAULT_WIFI_TX_POWER     = WIFI_POWER_19_5dBm;
     static const int   DEFAULT_WEBSERVER_PORT    = 80;
     static const int   DEFAULT_HTTP_STATE        = 1;
     static const int   DEFAULT_TELNETSERVER_PORT = 23;
@@ -115,7 +116,7 @@ namespace WebUI {
 
     private:
         static bool   ConnectSTA2AP();
-        static void   WiFiEvent(WiFiEvent_t event);
+        static void   WiFiEvent(arduino_event_id_t event, arduino_event_info_t info);
         static String _hostname;
         static bool   _events_registered;
     };

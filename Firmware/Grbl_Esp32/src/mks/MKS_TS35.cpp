@@ -1,6 +1,10 @@
 #include "MKS_TS35.h"
+#include <esp_timer.h>
 
 TFT_eSPI tft = TFT_eSPI(); 
+static bool ts35_beep_use_ledc = false;
+static esp_timer_handle_t ts35_beep_timer = nullptr;
+uint32_t ts35_beep_off_time = 0;
 
 void tft_LCD_Fill() {
     tft.fillRect(0, 0,480, 320, TFT_COLOR_RED);
@@ -16,32 +20,68 @@ void tft_TS35_init() {
 
 void ts35_beep_init() { 
     #ifdef USE_BEEP_LEDC
-        ledcSetup(BEEP_LEDC_CHANNEL, 5000, 8);
-        ledcAttachPin(BEEPER, BEEP_LEDC_CHANNEL);
-        ledcWrite(BEEP_LEDC_CHANNEL, 0);
+        if(BEEPER < I2S_OUT_PIN_BASE) {
+            ledcSetup(BEEP_LEDC_CHANNEL, 5000, 8);
+            ledcAttachPin(BEEPER, BEEP_LEDC_CHANNEL);
+            ledcWrite(BEEP_LEDC_CHANNEL, 0);
+            ts35_beep_use_ledc = true;
+        } else {
+            pinMode(BEEPER, OUTPUT);
+            digitalWrite(BEEPER, LOW);
+            ts35_beep_use_ledc = false;
+        }
     #else
         pinMode(BEEPER, OUTPUT);
         digitalWrite(BEEPER, LOW);
+        ts35_beep_use_ledc = false;
     #endif
+
+    if (ts35_beep_timer == nullptr) {
+        const esp_timer_create_args_t timer_args = {
+            .callback = [](void*) {
+                ts35_beep_off_time = 0;
+                ts35_beep_off();
+            },
+            .arg = nullptr,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "ts35_beep"
+        };
+        esp_timer_create(&timer_args, &ts35_beep_timer);
+    }
 }
 
 void ts35_beep_on(void) 
 {
-    #ifndef USE_BEEP_LEDC
-        if(beep_status->get()) digitalWrite(BEEPER, HIGH);
-    #endif
+    if(!beep_status->get()) {
+        return;
+    }
+
+    if(ts35_beep_use_ledc) {
+        ledcWrite(BEEP_LEDC_CHANNEL, 50);
+    } else {
+        digitalWrite(BEEPER, HIGH);
+    }
 }
 
 void ts35_beep_off(void) 
 {
-    #ifndef USE_BEEP_LEDC
+    if (ts35_beep_timer != nullptr) {
+        esp_timer_stop(ts35_beep_timer);
+    }
+
+    if(ts35_beep_use_ledc) {
+        ledcWrite(BEEP_LEDC_CHANNEL, 0);
+    } else {
         digitalWrite(BEEPER, LOW);
-    #endif
+    }
 }
 
-uint32_t ts35_beep_off_time = 0;
-
 void ts35_beep_handler(void) {
+
+    // With esp_timer active, timeout is handled asynchronously.
+    if (ts35_beep_timer != nullptr) {
+        return;
+    }
 
     if(ts35_beep_off_time > 0 && millis() > ts35_beep_off_time)
     {
@@ -51,10 +91,16 @@ void ts35_beep_handler(void) {
 }
 
 void ts35_beep_on(uint16_t time_ms) {
-
-    ts35_beep_off_time = millis() + uint32_t(time_ms);
-
     ts35_beep_on();
+
+    if (ts35_beep_timer != nullptr) {
+        esp_timer_stop(ts35_beep_timer);
+        if (time_ms > 0) {
+            esp_timer_start_once(ts35_beep_timer, uint64_t(time_ms) * 1000ULL);
+        }
+    } else {
+        ts35_beep_off_time = millis() + uint32_t(time_ms);
+    }
 }
 
 
