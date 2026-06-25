@@ -104,9 +104,9 @@ static void disp_imgbtn(void) {
         ready_src.ready_imgbtn_wifi_status = lv_imgbtn_creat_n_mks(mks_global.mks_src ,ready_src.ready_imgbtn_wifi_status, &png_wifi_connect, &png_wifi_connect, 0, 0, event_handler);
     }
 
-    ready_src.ready_imgbtn_Control = lv_imgbtn_creat_mks(mks_global.mks_src_1, ready_src.ready_imgbtn_Control, &png_ctrl_pre, &Control, LV_ALIGN_IN_TOP_LEFT,82, 6, event_handler);
-    ready_src.ready_imgbtn_Sculpture = lv_imgbtn_creat_mks(mks_global.mks_src_1, ready_src.ready_imgbtn_Sculpture, &png_file_pre, &Sculpture, LV_ALIGN_IN_TOP_LEFT, 210, 6, event_handler);
-    ready_src.ready_imgbtn_Tool = lv_imgbtn_creat_mks(mks_global.mks_src_1, ready_src.ready_imgbtn_Tool, &png_tool_pre, &Tool, LV_ALIGN_IN_TOP_LEFT, 322, 6, event_handler);
+    ready_src.ready_imgbtn_Control = lv_imgbtn_creat_mks(mks_global.mks_src_1, ready_src.ready_imgbtn_Control, &png_ctrl_pre, &png_ctrl_pre, LV_ALIGN_IN_TOP_LEFT,62, 12, event_handler);
+    ready_src.ready_imgbtn_Sculpture = lv_imgbtn_creat_mks(mks_global.mks_src_1, ready_src.ready_imgbtn_Sculpture, &png_file_pre, &png_file_pre, LV_ALIGN_IN_TOP_LEFT, 205, 12, event_handler);
+    ready_src.ready_imgbtn_Tool = lv_imgbtn_creat_mks(mks_global.mks_src_1, ready_src.ready_imgbtn_Tool, &png_tool_pre, &png_tool_pre, LV_ALIGN_IN_TOP_LEFT, 342, 12, event_handler);
 }
 
 static void disp_img(void) {
@@ -130,20 +130,20 @@ static void disp_label(void) {
     if (!ready_btn_label_style_inited) {
         lv_style_copy(&ready_btn_label_style, &lv_style_transp);
         ready_btn_label_style.text.color = LV_COLOR_WHITE;
-        ready_btn_label_style.text.font = &lv_font_roboto_28;
+        ready_btn_label_style.text.font = &lv_font_roboto_22;
         ready_btn_label_style_inited = true;
     }
 
-    ready_src.ready_label_Control   = label_for_imgbtn_name(mks_global.mks_src_1, ready_src.ready_label_Control,   ready_src.ready_imgbtn_Control,   -12, 0, mc_language.control);
-    ready_src.ready_label_Sculpture = label_for_imgbtn_name(mks_global.mks_src_1, ready_src.ready_label_Sculpture, ready_src.ready_imgbtn_Sculpture, -16, 0, mc_language.sculpture);
-    ready_src.ready_label_Tool      = label_for_imgbtn_name(mks_global.mks_src_1, ready_src.ready_label_Tool,      ready_src.ready_imgbtn_Tool,      -8, 0, mc_language.tool);
+    ready_src.ready_label_Control   = label_for_text(mks_global.mks_src_1, ready_src.ready_label_Control,   ready_src.ready_imgbtn_Control,   0, 0, LV_ALIGN_OUT_BOTTOM_MID, mc_language.control);
+    ready_src.ready_label_Sculpture = label_for_text(mks_global.mks_src_1, ready_src.ready_label_Sculpture, ready_src.ready_imgbtn_Sculpture, 0, 0, LV_ALIGN_OUT_BOTTOM_MID, mc_language.sculpture);
+    ready_src.ready_label_Tool      = label_for_text(mks_global.mks_src_1, ready_src.ready_label_Tool,      ready_src.ready_imgbtn_Tool,      0, 0, LV_ALIGN_OUT_BOTTOM_MID, mc_language.tool);
 
     lv_obj_set_style(ready_src.ready_label_Control,   &ready_btn_label_style);
     lv_obj_set_style(ready_src.ready_label_Sculpture, &ready_btn_label_style);
     lv_obj_set_style(ready_src.ready_label_Tool,      &ready_btn_label_style);
 
-    label_for_text(mks_global.mks_src, ready_src.ready_label_mpos, ready_src.ready_img_mpos, 0, 0, LV_ALIGN_OUT_RIGHT_MID, mc_language.Mpos);
-    label_for_text(mks_global.mks_src, ready_src.ready_label_wpos, ready_src.ready_img_wpos, 0, 0, LV_ALIGN_OUT_RIGHT_MID, mc_language.Wpos);
+    label_for_text(mks_global.mks_src, ready_src.ready_label_mpos, ready_src.ready_img_mpos, 5, 0, LV_ALIGN_OUT_RIGHT_MID, mc_language.Mpos);
+    label_for_text(mks_global.mks_src, ready_src.ready_label_wpos, ready_src.ready_img_wpos, 5, 0, LV_ALIGN_OUT_RIGHT_MID, mc_language.Wpos);
 
 
     ready_src.ready_label_xpos = label_for_text(mks_global.mks_src,   ready_src.ready_label_xpos, NULL , 40, 81,  LV_ALIGN_IN_TOP_LEFT, "X:   0.   ");

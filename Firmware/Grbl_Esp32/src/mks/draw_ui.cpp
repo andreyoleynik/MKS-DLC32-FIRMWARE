@@ -3,15 +3,15 @@
 void mks_global_style_init(void) {
     // 背景页面style
     lv_style_copy(&mks_global.mks_src_style, &lv_style_scr);
-    mks_global.mks_src_style.body.grad_color = LV_COLOR_MAKE(0x13, 0x12, 0x1a);
-	mks_global.mks_src_style.body.main_color = LV_COLOR_MAKE(0x13, 0x12, 0x1a);
+    mks_global.mks_src_style.body.grad_color = LV_COLOR_MAKE(0x01, 0x0B, 0x1C);
+	mks_global.mks_src_style.body.main_color = LV_COLOR_MAKE(0x01, 0x0B, 0x1C);
     mks_global.mks_src_style.text.color = LV_COLOR_WHITE;
     mks_global.mks_src_style.text.font = &dlc32Font;
     
     // 第一个
     lv_style_copy(&mks_global.mks_src_1_style, &lv_style_scr);
-    mks_global.mks_src_1_style.body.grad_color = LV_COLOR_MAKE(0x1F, 0x23, 0x33);
-	mks_global.mks_src_1_style.body.main_color = LV_COLOR_MAKE(0x1F, 0x23, 0x33);
+    mks_global.mks_src_1_style.body.grad_color = LV_COLOR_MAKE(0x01, 0x18, 0x47);
+	mks_global.mks_src_1_style.body.main_color = LV_COLOR_MAKE(0x01, 0x18, 0x47);
     mks_global.mks_src_1_style.text.color = LV_COLOR_WHITE;
     mks_global.mks_src_1_style.body.radius = 17;
     mks_global.mks_src_1_style.text.font = &dlc32Font;

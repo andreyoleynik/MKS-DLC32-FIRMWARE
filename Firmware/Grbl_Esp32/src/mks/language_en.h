@@ -7,9 +7,9 @@
 #define NO_EN                   "No"
 
 /* 主页 */
-#define CONTROL_EN              "Control"           
-#define SCULPTURE_EN            "Sculpture"         
-#define TOOL_EN                 "Tool"          
+#define CONTROL_EN              "Axis control"           
+#define SCULPTURE_EN            "File manager"         
+#define TOOL_EN                 "Settings"          
 #define MPOS_EN                 "Mechanical coords"          
 #define WPOS_EN                 "Working coords"
 #define WIFI_CONNECT_EN   	    "Connect"
