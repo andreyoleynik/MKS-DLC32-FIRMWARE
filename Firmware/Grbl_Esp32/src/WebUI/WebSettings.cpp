@@ -766,6 +766,7 @@ namespace WebUI {
         File outFile = SD.open(path.c_str(), FILE_WRITE);
         if (!outFile) {
             webPrintln("Cannot open settings backup file");
+            SD.end();
             return Error::FsFailedOpenFile;
         }
 
@@ -798,6 +799,7 @@ namespace WebUI {
         }
 
         outFile.close();
+        SD.end();
         webPrintln("Saved settings to ", path);
         return Error::Ok;
     }
@@ -820,6 +822,7 @@ namespace WebUI {
         File inFile = SD.open(path.c_str(), FILE_READ);
         if (!inFile) {
             webPrintln("Cannot open settings file");
+            SD.end();
             return Error::FsFailedOpenFile;
         }
 
@@ -874,6 +877,7 @@ namespace WebUI {
         }
 
         inFile.close();
+        SD.end();
         webPrintln("Restore done. Applied:", String(applied));
         webPrintln("Skipped:", String(skipped));
         return (applied > 0) ? Error::Ok : Error::InvalidValue;
