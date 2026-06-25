@@ -628,13 +628,16 @@ void mks_wifi_connect(char *username, char *password) {
     else if(wifi_src.wifi_kb_flag == wifi_kb_send_wifi_connect) {
          w_cont--;
          if(w_cont == 0) {
-            WebUI::wifi_config.mks_setup();
+            // НЕ зовём mks_setup() из тач/LVGL-задачи: он удаляет _socket_server/_webserver,
+            // пока clientCheckTask в web_server.handle() = use-after-free. Ставим флаг —
+            // реконфиг сделает WiFiConfig::handle() (clientCheckTask), неблокирующе.
+            WebUI::wifi_config.pending_wifi_reconfig = 1;
             wifi_src.wifi_kb_flag = wifi_kb_none_flag;
             w_cont = 0;
          }
     }
     else if(wifi_src.wifi_kb_flag == wifi_kb_send_wifi_disconnect) {
-        WebUI::wifi_config.end();
+        WebUI::wifi_config.pending_wifi_reconfig = 2;  // выключить WiFi — на clientCheckTask (UAF-safe)
         wifi_src.wifi_kb_flag = wifi_kb_none_flag;
     }
 }

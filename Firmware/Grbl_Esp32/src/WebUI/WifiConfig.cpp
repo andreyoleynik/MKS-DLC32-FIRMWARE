@@ -36,6 +36,7 @@ namespace WebUI {
 
     String WiFiConfig::_hostname          = "";
     bool   WiFiConfig::_events_registered = false;
+    volatile uint8_t WiFiConfig::pending_wifi_reconfig = 0;
 
     WiFiConfig::WiFiConfig() {}
 
@@ -597,6 +598,43 @@ namespace WebUI {
     void WiFiConfig::handle() {
         //Services
         COMMANDS::wait(0);
+
+        // Реконфиг WiFi, запрошенный ДРУГОЙ задачей (тач mks_wifi_connect/LVGL, [ESP115]):
+        // исполняем ЗДЕСЬ (clientCheckTask), чтобы create/destroy _socket_server/_webserver
+        // шли на той же задаче, что web_server.handle() — иначе delete под handle() = UAF-краш.
+        // НЕблокирующе (без mks_ConnectSTA2AP): ассоциация в фоне (GOT_IP + setAutoReconnect +
+        // self-heal ниже), чтобы НЕ заморозить realtime feed-hold/reset во время задания.
+        if (pending_wifi_reconfig != 0 && !sta_connect_busy) {
+            uint8_t act           = pending_wifi_reconfig;
+            pending_wifi_reconfig = 0;
+            if (act == 2) {  // выключить радио
+                StopWiFi();
+            } else if (act == 1) {  // (пере)подключиться по сохранённым настройкам
+                int8_t mode = wifi_radio_mode ? wifi_radio_mode->get() : ESP_RADIO_OFF;
+                wifi_services.end();
+                if (mode == ESP_WIFI_AP) {
+                    StartAP();
+                    wifi_services.begin();
+                } else if (mode == ESP_WIFI_STA) {
+                    WiFi.enableAP(false);
+                    WiFi.mode(WIFI_STA);
+                    if (wifi_hostname) {
+                        String h = wifi_hostname->get();
+                        WiFi.setHostname(h.c_str());
+                    }
+                    String ssid = wifi_sta_ssid ? wifi_sta_ssid->get() : String();
+                    String pw   = wifi_sta_password ? wifi_sta_password->get() : String();
+                    WiFi.setSleep(false);
+                    WiFi.setAutoReconnect(true);
+                    WiFi.begin(ssid.length() ? ssid.c_str() : DEFAULT_STA_SSID,
+                               pw.length() ? pw.c_str() : NULL);  // async — не блокируем clientCheckTask
+                    wifi_services.begin();
+                } else {
+                    WiFi.mode(WIFI_OFF);
+                }
+            }
+        }
+
         // Реконнект STA — на ядре 2.0.x (setAutoReconnect). handle() работает в
         // clientCheckTask, который ЕДИНСТВЕННЫЙ обслуживает realtime-команды (feed-hold
         // '!', reset 0x18, '?', cycle-start) и сетевые сервисы — поэтому здесь НЕЛЬЗЯ

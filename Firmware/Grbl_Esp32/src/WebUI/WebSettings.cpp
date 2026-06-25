@@ -1167,11 +1167,6 @@ namespace WebUI {
         }
 
         //Stop everything
-#if defined(ENABLE_WIFI)
-        if (WiFi.getMode() != WIFI_MODE_NULL) {
-            wifi_config.StopWiFi();
-        }
-#endif
 #if defined(ENABLE_BLUETOOTH)
         if (bt_config.Is_BT_on()) {
             bt_config.end();
@@ -1179,6 +1174,14 @@ namespace WebUI {
 #endif
         //if On start proper service
         if (!on) {
+#if defined(ENABLE_WIFI)
+            // НЕ зовём StopWiFi() напрямую: [ESP115] может исполняться из protocol-task
+            // (serial), а delete _socket_server/_webserver под clientCheckTask = UAF.
+            // Реконфиг делает WiFiConfig::handle() (clientCheckTask) по флагу, неблокирующе.
+            if (WiFi.getMode() != WIFI_MODE_NULL) {
+                wifi_config.pending_wifi_reconfig = 2;  // OFF
+            }
+#endif
             webPrintln("[MSG: Radio is Off]");
             return Error::Ok;
         }
@@ -1192,7 +1195,7 @@ namespace WebUI {
                 return Error::WifiFailBegin;
 
 #    else
-                wifi_config.begin();
+                wifi_config.pending_wifi_reconfig = 1;  // (пере)запуск WiFi на clientCheckTask (UAF-safe, неблок.)
                 return Error::Ok;
 #    endif
             case ESP_BT:
@@ -1200,6 +1203,11 @@ namespace WebUI {
                 webPrintln("Bluetooth is not enabled!");
                 return Error::BtFailBegin;
 #    else
+#        if defined(ENABLE_WIFI)
+                if (WiFi.getMode() != WIFI_MODE_NULL) {
+                    wifi_config.pending_wifi_reconfig = 2;  // стоп WiFi перед BT
+                }
+#        endif
                 bt_config.begin();
                 return Error::Ok;
 #    endif

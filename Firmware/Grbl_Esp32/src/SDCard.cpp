@@ -360,8 +360,10 @@ SDState get_sd_state(bool refresh) {
         return sd_state;  //to avoid refresh=true + busy to reset SD and waste time
     }
 
-    // If already mounted and known idle, avoid unnecessary unmount/remount churn.
-    if ((sd_state == SDState::Idle) && (SD.cardSize() > 0)) {
+    // If already mounted and known idle, avoid unnecessary unmount/remount churn —
+    // но не доверять кэшу, если CD-пин говорит, что карту вынули (иначе выём в Idle
+    // не детектится: SD.cardSize() возвращает кэш). cd_present посчитан выше по GPIO39.
+    if ((sd_state == SDState::Idle) && cd_present && (SD.cardSize() > 0)) {
         return sd_state;
     }
 
