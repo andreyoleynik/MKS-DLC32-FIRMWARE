@@ -65,7 +65,12 @@ namespace WebUI {
     /**
      * Restart ESP
      */
-    void COMMANDS::restart_ESP() { restart_ESP_module = true; }
+    void COMMANDS::restart_ESP() {
+        // Ensure motion outputs are de-energized before the restart request is handled.
+        spindle->stop();
+        coolant_off();
+        restart_ESP_module = true;
+    }
 
     /**
      * Handle not critical actions that must be done in sync environement

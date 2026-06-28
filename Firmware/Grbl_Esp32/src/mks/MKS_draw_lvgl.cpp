@@ -387,7 +387,7 @@ void mks_lv_clean_ui(void) {
 static void event_handler_globel_popup_sure(lv_obj_t* obj, lv_event_t event) { 
 
     if (event == LV_EVENT_RELEASED) { 
-        lv_obj_del(com_p2.com_popup_src);
+        close_global_popup();
 
         if(mks_ui_page.mks_ui_page == MKS_UI_Frame) {
             frame_ctrl.out = false;
@@ -395,7 +395,6 @@ static void event_handler_globel_popup_sure(lv_obj_t* obj, lv_event_t event) {
             mks_ui_page.mks_ui_page = MKS_UI_PAGE_LOADING;
             mks_draw_ready();
         }
-        mks_grbl.popup_1_flag = false;
         frame_ctrl.is_begin_run = false;
     }
 }
@@ -648,9 +647,20 @@ void common_popup_com_del(void) {
     com_p_info_com.mux = false;
 }
 
+void close_global_popup(void) {
+    if (!mks_grbl.popup_1_flag) {
+        return;
+    }
+
+    if (com_p2.com_popup_src != NULL) {
+        lv_obj_del(com_p2.com_popup_src);
+        com_p2.com_popup_src = NULL;
+    }
+    mks_grbl.popup_1_flag = false;
+}
+
 void global_popup_del(void) { 
-    lv_obj_del(com_p1.com_popup_src);
-    com_p1.mux = false;
+    close_global_popup();
 }
 
 void cavre_popup_del(void) { 

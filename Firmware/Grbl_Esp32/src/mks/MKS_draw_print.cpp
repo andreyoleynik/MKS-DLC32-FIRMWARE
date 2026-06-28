@@ -1,5 +1,7 @@
 #include "MKS_draw_print.h"
 #include "../System.h"
+#include "../SDCard.h"
+#include "MKS_draw_frame.h"
 
 PWR_CTRL_t mks_pwr_ctrl;
 SPEED_CTRL_t mks_speed_ctrl;
@@ -16,29 +18,31 @@ static lv_obj_t* btn_finsh_popup_sure;
 
 lv_obj_t* Label_print_file_name;
 
-LV_IMG_DECLARE(M_Pause);  // 暂停
-LV_IMG_DECLARE(M_start);  // 开始
-LV_IMG_DECLARE(M_Stop);  // 停止
-LV_IMG_DECLARE(M_PWRr);  // 功率
-LV_IMG_DECLARE(M_SPEED);  // 速度
-LV_IMG_DECLARE(back);  // 速度
+static void resolve_print_filename(char* dst, size_t dst_size);
 
-LV_IMG_DECLARE(add);  // 加
-LV_IMG_DECLARE(confirm);  // 确认
-LV_IMG_DECLARE(s_return);  // 确认
-LV_IMG_DECLARE(reduce);  // 减
+LV_IMG_DECLARE(M_Pause);  // Пауза
+LV_IMG_DECLARE(M_start);  // Старт
+LV_IMG_DECLARE(M_Stop);  // Стоп
+LV_IMG_DECLARE(M_PWRr);  // Мощность
+LV_IMG_DECLARE(M_SPEED);  // Скорость
+LV_IMG_DECLARE(back);  // Назад
+
+LV_IMG_DECLARE(add);  // Добавить
+LV_IMG_DECLARE(confirm);  // Подтвердить
+LV_IMG_DECLARE(s_return);  // Вернуться
+LV_IMG_DECLARE(reduce);  // Уменьшить
 
 LV_IMG_DECLARE(png_cave_pwr);
 LV_IMG_DECLARE(png_cave_speed);
 LV_IMG_DECLARE(png_cave_xpos);
 LV_IMG_DECLARE(png_cave_ypos);
 LV_IMG_DECLARE(png_cave_zpos);
-LV_IMG_DECLARE(png_pause_pre);          // 暂停
-LV_IMG_DECLARE(png_start_pre);          // 开始
-LV_IMG_DECLARE(png_stop_pre);           // 停止
-LV_IMG_DECLARE(png_cave_pwr_pre);       // 功率
-LV_IMG_DECLARE(png_cave_speed_pre);     // 速度
-LV_IMG_DECLARE(png_times);              // 雕刻次数
+LV_IMG_DECLARE(png_pause_pre);          // Пауза
+LV_IMG_DECLARE(png_start_pre);          // Старт
+LV_IMG_DECLARE(png_stop_pre);           // Стоп
+LV_IMG_DECLARE(png_cave_pwr_pre);       // Мощность
+LV_IMG_DECLARE(png_cave_speed_pre);     // Скорость
+LV_IMG_DECLARE(png_times);              // Количество гравировок
 
 static void sync_print_state_ui(void) {
     if (print_src.print_imgbtn_suspend == NULL || print_src.print_Label_p_suspend == NULL) {
@@ -115,27 +119,31 @@ void mks_draw_print(void) {
     // mks fix
     print_setting.carve_staus = CAVRE_START;
 
-    memcpy(print_file_name, file_print_send, sizeof(file_print_send));
-    if(print_file_name[0] == '/') print_file_name[0] = ' ';
+    resolve_print_filename(print_file_name, sizeof(print_file_name));
 
     mks_pwr_ctrl.pwr_len = PWR_1_PERSEN;
     mks_speed_ctrl.speed_len = SPEED_1_PERSEN;
 
     lv_style_copy(&print_src.print_file_name_style, &lv_style_plain_color);
     print_src.print_file_name_style.text.font = &lv_font_roboto_16;
+    print_src.print_file_name_style.text.color = LV_COLOR_WHITE;
 
-    /* 进度条背景样式 */
+    lv_style_copy(&print_src.print_coord_style, &lv_style_plain_color);
+    print_src.print_coord_style.text.font = &lv_font_roboto_28;
+    print_src.print_coord_style.text.color = LV_COLOR_WHITE;
+
+    /* Стиль фона индикатора прогресса */
     lv_style_copy(&print_src.print_bar_bg_style, &lv_style_plain_color);
     print_src.print_bar_bg_style.body.main_color = LV_COLOR_MAKE(0x3F,0x46,0x66);
     print_src.print_bar_bg_style.body.grad_color = LV_COLOR_MAKE(0x3F,0x46,0x66);
     print_src.print_bar_bg_style.body.radius = 5;
 
-    /* 进度条显示样式 */
+    /* Стиль заполнения индикатора прогресса */
     lv_style_copy(&print_src.print_bar_indic_style,&lv_style_plain_color);
     print_src.print_bar_indic_style.body.main_color = LV_COLOR_MAKE(0x52,0xCC,0x82);
     print_src.print_bar_indic_style.body.grad_color = LV_COLOR_MAKE(0x52,0xCC,0x82);
     print_src.print_bar_indic_style.body.radius = 5;
-    print_src.print_bar_indic_style.body.padding.left = 0;//让指示器跟背景边框之间没有距离
+    print_src.print_bar_indic_style.body.padding.left = 0;//Убрать отступ между индикатором и рамкой фона
     print_src.print_bar_indic_style.body.padding.top = 0;
     print_src.print_bar_indic_style.body.padding.right = 0;
     print_src.print_bar_indic_style.body.padding.bottom = 0;
@@ -155,29 +163,52 @@ void mks_draw_print(void) {
     
 
 
-    print_src.print_Label_caveSpeed =  label_for_text(mks_global.mks_src, print_src.print_Label_caveSpeed, NULL, 20, 82, LV_ALIGN_IN_TOP_LEFT, "Feed:0%");
+    print_src.print_Label_caveSpeed =  label_for_text(mks_global.mks_src, print_src.print_Label_caveSpeed, NULL, 8, 82, LV_ALIGN_IN_TOP_LEFT, "Feed:0%");
     print_src.print_Label_power = label_for_text(mks_global.mks_src, print_src.print_Label_power, NULL, 178, 82, LV_ALIGN_IN_TOP_LEFT, "Spindle:0%");
     print_src.print_Label_caveR =  label_for_text(mks_global.mks_src, print_src.print_Label_caveR, NULL, 338, 82, LV_ALIGN_IN_TOP_LEFT, "Rapid:0%");
-    print_src.print_Label_moveSpeed = label_for_text(mks_global.mks_src, print_src.print_Label_moveSpeed, NULL, 20, 101, LV_ALIGN_IN_TOP_LEFT, "Move:0 mm/min");
+    print_src.print_Label_moveSpeed = label_for_text(mks_global.mks_src, print_src.print_Label_moveSpeed, NULL, 8, 101, LV_ALIGN_IN_TOP_LEFT, "Move:0 mm/min");
 
-    print_src.print_Label_wpos = label_for_text(mks_global.mks_src, print_src.print_Label_wpos, NULL, 40, 118, LV_ALIGN_IN_TOP_LEFT, "Wpos");
-    print_src.print_Label_mpos = label_for_text(mks_global.mks_src, print_src.print_Label_mpos, NULL, 280, 118, LV_ALIGN_IN_TOP_LEFT, "Mpos");
+    mks_lvgl_img_set_algin(mks_global.mks_src, NULL, &png_w_pos, LV_ALIGN_IN_TOP_LEFT, 15, 145);
+    mks_lvgl_img_set_algin(mks_global.mks_src, NULL, &png_m_pos, LV_ALIGN_IN_TOP_LEFT, 245, 145);
 
-    print_src.print_Label_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_x_pos, NULL, 40, 145, LV_ALIGN_IN_TOP_LEFT, "X:   0.00");
-    print_src.print_Label_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_y_pos, NULL, 40, 175, LV_ALIGN_IN_TOP_LEFT, "Y:   0.00");
-    print_src.print_Label_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_z_pos, NULL, 40, 205, LV_ALIGN_IN_TOP_LEFT, "Z:   0.00");
+    print_src.print_Label_x_axis = label_for_text(mks_global.mks_src, print_src.print_Label_x_axis, NULL, 60, 145, LV_ALIGN_IN_TOP_LEFT, "X:");
+    print_src.print_Label_y_axis = label_for_text(mks_global.mks_src, print_src.print_Label_y_axis, NULL, 60, 175, LV_ALIGN_IN_TOP_LEFT, "Y:");
+    print_src.print_Label_z_axis = label_for_text(mks_global.mks_src, print_src.print_Label_z_axis, NULL, 60, 205, LV_ALIGN_IN_TOP_LEFT, "Z:");
 
-    print_src.print_Label_m_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_pos, NULL, 280, 145, LV_ALIGN_IN_TOP_LEFT, "X:   0.00");
-    print_src.print_Label_m_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_pos, NULL, 280, 175, LV_ALIGN_IN_TOP_LEFT, "Y:   0.00");
-    print_src.print_Label_m_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_pos, NULL, 280, 205, LV_ALIGN_IN_TOP_LEFT, "Z:   0.00");
+    print_src.print_Label_m_x_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_axis, NULL, 300, 145, LV_ALIGN_IN_TOP_LEFT, "X:");
+    print_src.print_Label_m_y_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_axis, NULL, 300, 175, LV_ALIGN_IN_TOP_LEFT, "Y:");
+    print_src.print_Label_m_z_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_axis, NULL, 300, 205, LV_ALIGN_IN_TOP_LEFT, "Z:");
 
-    Label_print_file_name = label_for_text(mks_global.mks_src, Label_print_file_name, NULL, 30, 6, LV_ALIGN_IN_TOP_LEFT, print_file_name);
+    print_src.print_Label_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_x_pos, NULL, 65, 145, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_y_pos, NULL, 65, 175, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_z_pos, NULL, 65, 205, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+
+    print_src.print_Label_m_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_pos, NULL, 305, 145, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_m_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_pos, NULL, 305, 175, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_m_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_pos, NULL, 305, 205, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+
+    lv_label_set_style(print_src.print_Label_x_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_y_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_z_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_m_x_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_m_y_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_m_z_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_x_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_y_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_z_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_m_x_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_m_y_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+    lv_label_set_style(print_src.print_Label_m_z_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+
+    Label_print_file_name = mks_lvgl_long_sroll_label_with_wight_set(mks_global.mks_src, Label_print_file_name, 8, 6, print_file_name, 255);
+    lv_label_set_long_mode(Label_print_file_name, LV_LABEL_LONG_SROLL_CIRC);
+    lv_obj_set_width(Label_print_file_name, 460);
     lv_label_set_style(Label_print_file_name, LV_LABEL_STYLE_MAIN, &print_src.print_file_name_style);
 
     print_src.print_bar_print_percen = label_for_btn_name(print_src.print_bar_print, print_src.print_bar_print_percen, 190, 0, "0%");
     sync_print_state_ui();
 
-    mks_ui_page.mks_ui_page = MKS_UI_Pring;  //进入雕刻界面
+    mks_ui_page.mks_ui_page = MKS_UI_Pring;  //Перейти на экран гравировки
 	mks_ui_page.wait_count = DEFAULT_UI_COUNT;
 }
 
@@ -249,7 +280,7 @@ void mks_draw_print_popup(const char* text) {
     lv_style_copy(&print_src.print_popup_btn_style, &lv_style_scr);
     print_src.print_popup_btn_style.body.main_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_popup_btn_style.body.grad_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
-    print_src.print_popup_btn_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_popup_btn_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_popup_btn_style.text.color = LV_COLOR_WHITE;
     print_src.print_popup_btn_style.body.radius = 10; 
 
@@ -289,7 +320,7 @@ void mks_draw_finsh_pupop(void) {
     lv_style_copy(&print_src.print_popup_btn_style, &lv_style_scr);
     print_src.print_popup_btn_style.body.main_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_popup_btn_style.body.grad_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
-    print_src.print_popup_btn_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_popup_btn_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_popup_btn_style.text.color = LV_COLOR_WHITE;
     print_src.print_popup_btn_style.body.radius = 10; 
 
@@ -455,14 +486,14 @@ void mks_print_pwr_set(void) {
     lv_style_copy(&print_src.print_mm_btn1_style, &lv_style_scr);
     print_src.print_mm_btn1_style.body.main_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_mm_btn1_style.body.grad_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
-    print_src.print_mm_btn1_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_mm_btn1_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_mm_btn1_style.text.color = LV_COLOR_WHITE;
     print_src.print_mm_btn1_style.body.radius = 10; 
 
     lv_style_copy(&print_src.print_mm_btn2_style, &lv_style_scr);
     print_src.print_mm_btn2_style.body.main_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_mm_btn2_style.body.grad_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
-    print_src.print_mm_btn2_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_mm_btn2_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_mm_btn2_style.text.color = LV_COLOR_WHITE;
     print_src.print_mm_btn2_style.body.radius = 10; 
 
@@ -649,14 +680,14 @@ void mks_print_speed_set(void) {
     lv_style_copy(&print_src.print_mm_btn1_style, &lv_style_scr);
     print_src.print_mm_btn1_style.body.main_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_mm_btn1_style.body.grad_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
-    print_src.print_mm_btn1_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_mm_btn1_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_mm_btn1_style.text.color = LV_COLOR_WHITE;
     print_src.print_mm_btn1_style.body.radius = 10; 
 
     lv_style_copy(&print_src.print_mm_btn2_style, &lv_style_scr);
     print_src.print_mm_btn2_style.body.main_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_mm_btn2_style.body.grad_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
-    print_src.print_mm_btn2_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_mm_btn2_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_mm_btn2_style.text.color = LV_COLOR_WHITE;
     print_src.print_mm_btn2_style.body.radius = 10; 
 
@@ -969,7 +1000,7 @@ void draw_adj_popup(void) {
     lv_style_copy(&print_src.print_mm_btn1_style, &lv_style_scr);
     print_src.print_mm_btn1_style.body.main_color = LV_COLOR_MAKE(0xCE, 0xD6, 0xE5);
     print_src.print_mm_btn1_style.body.grad_color = LV_COLOR_MAKE(0xCE, 0xD6, 0xE5);
-    print_src.print_mm_btn1_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_mm_btn1_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_mm_btn1_style.body.border.width = 1;
     print_src.print_mm_btn1_style.body.border.color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_mm_btn1_style.text.color =  LV_COLOR_MAKE(0x3F, 0x46, 0x66);;
@@ -978,7 +1009,7 @@ void draw_adj_popup(void) {
     lv_style_copy(&print_src.print_mm_btn2_style, &lv_style_scr);
     print_src.print_mm_btn2_style.body.main_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
     print_src.print_mm_btn2_style.body.grad_color = LV_COLOR_MAKE(0x3F, 0x46, 0x66);
-    print_src.print_mm_btn2_style.body.opa = LV_OPA_COVER;//设置背景色完全不透明
+    print_src.print_mm_btn2_style.body.opa = LV_OPA_COVER;//Сделать фон полностью непрозрачным
     print_src.print_mm_btn2_style.text.color = LV_COLOR_WHITE;
     print_src.print_mm_btn2_style.body.radius = 10; 
 
@@ -1052,6 +1083,100 @@ void set_print_click(bool status) {
 
 
 char pl_info[128];
+
+static void format_print_axis_value(char* dst, size_t dst_size, char axis_name, float value) {
+    char raw[24];
+    char int_part[16];
+    char int_field[5] = {' ', ' ', ' ', ' ', '\0'};
+    char frac_field[4] = {' ', ' ', ' ', '\0'};
+    char* dot = NULL;
+    int int_len = 0;
+    int keep_frac = 0;
+
+    (void)axis_name;
+
+    snprintf(raw, sizeof(raw), "% .3f", value);
+    dot = strchr(raw, '.');
+    if (dot == NULL) {
+        snprintf(dst, dst_size, "   0   ");
+        return;
+    }
+
+    *dot = '\0';
+    snprintf(int_part, sizeof(int_part), "%s", raw);
+    int_len = strlen(int_part);
+    if (int_len > 4) {
+        int_len = 4;
+    }
+    memcpy(&int_field[4 - int_len], int_part, int_len);
+
+    while (keep_frac < 3 && dot[1 + keep_frac] >= '0' && dot[1 + keep_frac] <= '9') {
+        keep_frac++;
+    }
+    while (keep_frac > 0 && dot[keep_frac] == '0') {
+        keep_frac--;
+    }
+
+    if (keep_frac > 0) {
+        memcpy(frac_field, dot + 1, keep_frac);
+        snprintf(dst, dst_size, "%s.%s", int_field, frac_field);
+    } else {
+        // Keep the same horizontal alignment as if '.' existed, but do not draw it.
+        snprintf(dst, dst_size, "%s %s", int_field, frac_field);
+    }
+}
+
+static lv_coord_t get_print_dot_anchor_x(lv_coord_t base_label_x) {
+    if (base_label_x < 200) return 155;
+    return 395;
+}
+
+static void update_print_coord_label(lv_obj_t* label, const char* text, lv_coord_t base_x, lv_coord_t y) {
+    lv_coord_t prefix_w;
+    lv_coord_t anchor_x;
+    const lv_font_t* font = print_src.print_coord_style.text.font;
+    const lv_coord_t letter_space = print_src.print_coord_style.text.letter_space;
+    uint16_t prefix_len;
+
+    if (label == NULL || text == NULL || font == NULL) {
+        return;
+    }
+
+    // We always reserve 4 chars before the decimal slot in format_print_axis_value().
+    // Use that fixed field width for anchoring so the decimal position is stable
+    // even when '.' is not present (e.g. hidden trailing zeros case).
+    prefix_len = (uint16_t)strlen(text);
+    if (prefix_len > 4) {
+        prefix_len = 4;
+    }
+    prefix_w = lv_txt_get_width(text, prefix_len, font, letter_space, LV_TXT_FLAG_NONE);
+    anchor_x = get_print_dot_anchor_x(base_x);
+    lv_obj_set_pos(label, anchor_x - prefix_w, y);
+}
+
+static void resolve_print_filename(char* dst, size_t dst_size) {
+    char current_file_name[128] = { 0 };
+
+    if (dst == NULL || dst_size == 0) {
+        return;
+    }
+
+    if (frame_ctrl.file_name[0] != '\0') {
+        snprintf(dst, dst_size, "%s", frame_ctrl.file_name);
+    } else {
+        sd_get_current_filename(current_file_name, sizeof(current_file_name));
+        if (current_file_name[0] != '\0') {
+            snprintf(dst, dst_size, "%s", current_file_name);
+        } else {
+            snprintf(dst, dst_size, "%s", file_print_send);
+        }
+    }
+
+    if (dst[0] == '/') {
+        dst[0] = ' ';
+    }
+}
+
 void mks_print_data_updata(void) {
     float machine_pos[MAX_N_AXIS];
     float work_pos[MAX_N_AXIS];
@@ -1084,24 +1209,36 @@ void mks_print_data_updata(void) {
     snprintf(print_data_updata.print_move_speed_str, sizeof(print_data_updata.print_move_speed_str), "Move:%.0f mm/min", st_get_realtime_rate());
     print_src.print_Label_moveSpeed = mks_lv_label_updata(print_src.print_Label_moveSpeed, print_data_updata.print_move_speed_str);
 
-    snprintf(w_x_pos, sizeof(w_x_pos), "X:%7.2f", work_pos[0]);
+    format_print_axis_value(w_x_pos, sizeof(w_x_pos), 'X', work_pos[0]);
     print_src.print_Label_x_pos = mks_lv_label_updata(print_src.print_Label_x_pos, w_x_pos);
-    snprintf(w_y_pos, sizeof(w_y_pos), "Y:%7.2f", work_pos[1]);
+    update_print_coord_label(print_src.print_Label_x_pos, w_x_pos, 70, 145);
+    format_print_axis_value(w_y_pos, sizeof(w_y_pos), 'Y', work_pos[1]);
     print_src.print_Label_y_pos = mks_lv_label_updata(print_src.print_Label_y_pos, w_y_pos);
-    snprintf(w_z_pos, sizeof(w_z_pos), "Z:%7.2f", work_pos[2]);
+    update_print_coord_label(print_src.print_Label_y_pos, w_y_pos, 70, 175);
+    format_print_axis_value(w_z_pos, sizeof(w_z_pos), 'Z', work_pos[2]);
     print_src.print_Label_z_pos = mks_lv_label_updata(print_src.print_Label_z_pos, w_z_pos);
+    update_print_coord_label(print_src.print_Label_z_pos, w_z_pos, 70, 205);
 
-    snprintf(m_x_pos, sizeof(m_x_pos), "X:%7.2f", machine_pos[0]);
+    format_print_axis_value(m_x_pos, sizeof(m_x_pos), 'X', machine_pos[0]);
     print_src.print_Label_m_x_pos = mks_lv_label_updata(print_src.print_Label_m_x_pos, m_x_pos);
-    snprintf(m_y_pos, sizeof(m_y_pos), "Y:%7.2f", machine_pos[1]);
+    update_print_coord_label(print_src.print_Label_m_x_pos, m_x_pos, 310, 145);
+    format_print_axis_value(m_y_pos, sizeof(m_y_pos), 'Y', machine_pos[1]);
     print_src.print_Label_m_y_pos = mks_lv_label_updata(print_src.print_Label_m_y_pos, m_y_pos);
-    snprintf(m_z_pos, sizeof(m_z_pos), "Z:%7.2f", machine_pos[2]);
+    update_print_coord_label(print_src.print_Label_m_y_pos, m_y_pos, 310, 175);
+    format_print_axis_value(m_z_pos, sizeof(m_z_pos), 'Z', machine_pos[2]);
     print_src.print_Label_m_z_pos = mks_lv_label_updata(print_src.print_Label_m_z_pos, m_z_pos);
+    update_print_coord_label(print_src.print_Label_m_z_pos, m_z_pos, 310, 205);
 
     sync_print_state_ui();
 
     if (get_sd_state(false) == SDState::BusyPrinting) {
         mks_print_bar_updata();
+    }
+
+    if (Label_print_file_name != NULL) {
+        char current_print_file_name[128];
+        resolve_print_filename(current_print_file_name, sizeof(current_print_file_name));
+        lv_label_set_text(Label_print_file_name, current_print_file_name);
     }
 }
 

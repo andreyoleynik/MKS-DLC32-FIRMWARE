@@ -43,6 +43,7 @@
 #    include <esp_wifi_types.h>
 #    include <esp_partition.h>
 #    include <lwip/sockets.h>
+#    include <string.h>
 #    if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
 #        include <esp_core_dump.h>
 #    endif
@@ -327,7 +328,25 @@ namespace WebUI {
                 _webserver->send(500, "text/plain", "WebUI open failed");
                 return;
             }
-            _webserver->streamFile(file, contentType);
+            size_t totalFileSize = file.size();
+            size_t sentBytes     = 0;
+
+            _webserver->setContentLength(totalFileSize);
+            if (path.endsWith(".gz")) {
+                _webserver->sendHeader("Content-Encoding", "gzip");
+            }
+            _webserver->send(200, contentType, "");
+
+            uint8_t buf[1024];
+            while (sentBytes < totalFileSize) {
+                int chunk = file.read(buf, sizeof(buf));
+                if (chunk <= 0) {
+                    break;
+                }
+                _webserver->client().write(buf, chunk);
+                sentBytes += (size_t)chunk;
+                COMMANDS::wait(0);
+            }
             file.close();
             return;
         }
@@ -1581,7 +1600,38 @@ namespace WebUI {
         _webserver->sendHeader("Content-Type", "application/json");
         _webserver->sendHeader("Cache-Control", "no-cache");
         _webserver->send(200);
-        _webserver->sendContent("{\"files\":[");
+
+        char   out_chunk[1024];
+        size_t out_used = 0;
+        auto flush_out = [&]() {
+            if (out_used == 0) {
+                return;
+            }
+            out_chunk[out_used] = '\0';
+            _webserver->sendContent(out_chunk);
+            out_used = 0;
+        };
+        auto append_out = [&](const char* text) {
+            size_t text_len = strlen(text);
+            if (text_len == 0) {
+                return;
+            }
+
+            if (text_len > sizeof(out_chunk) - 1) {
+                flush_out();
+                _webserver->sendContent(text);
+                return;
+            }
+
+            if (out_used + text_len > sizeof(out_chunk) - 1) {
+                flush_out();
+            }
+
+            memcpy(&out_chunk[out_used], text, text_len);
+            out_used += text_len;
+        };
+
+        append_out("{\"files\":[");
 
         if (list_files) {
             File dir = SD.open(path);
@@ -1594,27 +1644,40 @@ namespace WebUI {
             while (entry) {
                 COMMANDS::wait(1);
                 if (i > 0) {
-                    _webserver->sendContent(",");
+                    append_out(",");
                 }
-                _webserver->sendContent("{\"name\":\"");
                 const char* entry_name = entry.name();
                 const char* base_name  = strrchr(entry_name, '/');
                 base_name              = (base_name == NULL) ? entry_name : (base_name + 1);
-                _webserver->sendContent(base_name);
-                _webserver->sendContent("\",\"shortname\":\"");  //No need here
-                _webserver->sendContent(base_name);
-                _webserver->sendContent("\",\"size\":\"");
+                char        size_text[24];
                 if (entry.isDirectory()) {
-                    _webserver->sendContent("-1");
+                    snprintf(size_text, sizeof(size_text), "-1");
                 } else {
                     // files have sizes, directories do not
-                    char size_text[24];
                     format_bytes_to_text(entry.size(), size_text, sizeof(size_text));
-                    _webserver->sendContent(size_text);
                 }
-                _webserver->sendContent("\",\"datetime\":\"");
-                //TODO - can be done later
-                _webserver->sendContent("\"}");
+
+                // Build a full entry line to reduce transient allocations in HTTP chunking.
+                char entry_json[640];
+                int  entry_len = snprintf(entry_json,
+                                         sizeof(entry_json),
+                                         "{\"name\":\"%s\",\"shortname\":\"%s\",\"size\":\"%s\",\"datetime\":\"\"}",
+                                         base_name,
+                                         base_name,
+                                         size_text);
+                if (entry_len > 0 && entry_len < (int)sizeof(entry_json)) {
+                    append_out(entry_json);
+                } else {
+                    append_out("{\"name\":\"");
+                    append_out(base_name);
+                    append_out("\",\"shortname\":\"");  //No need here
+                    append_out(base_name);
+                    append_out("\",\"size\":\"");
+                    append_out(size_text);
+                    append_out("\",\"datetime\":\"");
+                    //TODO - can be done later
+                    append_out("\"}");
+                }
                 i++;
                 entry.close();
                 entry = dir.openNextFile();
@@ -1639,27 +1702,28 @@ namespace WebUI {
         if (occupedspace <= 1) {
             occupedspace = 1;
         }
-        _webserver->sendContent("],\"path\":\"");
-        _webserver->sendContent(path);
-        _webserver->sendContent("\",\"total\":\"");
+        append_out("],\"path\":\"");
+        append_out(path.c_str());
+        append_out("\",\"total\":\"");
         if (totalspace) {
-            _webserver->sendContent(stotalspace);
+            append_out(stotalspace);
         } else {
-            _webserver->sendContent("-1");
+            append_out("-1");
         }
-        _webserver->sendContent("\",\"used\":\"");
-        _webserver->sendContent(susedspace);
-        _webserver->sendContent("\",\"occupation\":\"");
+        append_out("\",\"used\":\"");
+        append_out(susedspace);
+        append_out("\",\"occupation\":\"");
         if (totalspace) {
             char occ[16];
             snprintf(occ, sizeof(occ), "%u", (unsigned)occupedspace);
-            _webserver->sendContent(occ);
+            append_out(occ);
         } else {
-            _webserver->sendContent("-1");
+            append_out("-1");
         }
-        _webserver->sendContent("\",\"mode\":\"direct\",\"status\":\"");
-        _webserver->sendContent(sstatus);
-        _webserver->sendContent("\"}");
+        append_out("\",\"mode\":\"direct\",\"status\":\"");
+        append_out(sstatus.c_str());
+        append_out("\"}");
+        flush_out();
         _webserver->sendContent("");
         set_sd_state(SDState::Idle);
         SD.end();

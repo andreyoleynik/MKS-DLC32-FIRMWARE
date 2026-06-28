@@ -112,6 +112,7 @@ typedef struct {
     lv_style_t print_bar_bg_style;
     lv_style_t print_bar_indic_style;
     lv_style_t print_file_name_style;
+    lv_style_t print_coord_style;
     lv_style_t print_sp_style;
 
     /* Label*/
@@ -133,6 +134,12 @@ typedef struct {
     lv_obj_t* print_Label_m_x_pos;
     lv_obj_t* print_Label_m_y_pos;
     lv_obj_t* print_Label_m_z_pos;
+    lv_obj_t* print_Label_x_axis;
+    lv_obj_t* print_Label_y_axis;
+    lv_obj_t* print_Label_z_axis;
+    lv_obj_t* print_Label_m_x_axis;
+    lv_obj_t* print_Label_m_y_axis;
+    lv_obj_t* print_Label_m_z_axis;
     lv_obj_t* print_Label_mpos;
     lv_obj_t* print_Label_wpos;
     lv_obj_t* print_Label_popup;

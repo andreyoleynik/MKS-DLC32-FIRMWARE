@@ -1,6 +1,7 @@
 #include "Grbl.h"
 #include <map>
 #include <vector>
+#include <ctype.h>
 #include "Regex.h"
 #include <esp_partition.h>
 #if !defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_NONE)
@@ -869,14 +870,54 @@ Error system_execute_line(char* line, uint8_t client, WebUI::AuthenticationLevel
 void system_execute_startup(char* line) {
     Error status_code;
     char  gcline[256];
+
+    auto startup_has_spindle_enable = [](const char* s) -> bool {
+        if (s == NULL) {
+            return false;
+        }
+
+        for (const char* p = s; *p != '\0'; ++p) {
+            if (tolower((unsigned char)*p) != 'm') {
+                continue;
+            }
+
+            const char* q = p + 1;
+            while (*q == '0') {
+                ++q;
+            }
+
+            if (*q == '3' || *q == '4') {
+                return true;
+            }
+        }
+        return false;
+    };
+
     strncpy(gcline, startup_line_0->get(), 255);
+    gcline[255] = '\0';
     if (*gcline) {
-        status_code = gc_execute_line(gcline, CLIENT_SERIAL);
+        if (startup_has_spindle_enable(gcline)) {
+            status_code = Error::InvalidStatement;
+            grbl_msg_sendf(CLIENT_SERIAL, MsgLevel::Warning, "Skipped startup line with spindle enable command: %s", gcline);
+        } else {
+            status_code = gc_execute_line(gcline, CLIENT_SERIAL);
+        }
         report_execute_startup_message(gcline, status_code, CLIENT_SERIAL);
     }
     strncpy(gcline, startup_line_1->get(), 255);
+    gcline[255] = '\0';
     if (*gcline) {
-        status_code = gc_execute_line(gcline, CLIENT_SERIAL);
+        if (startup_has_spindle_enable(gcline)) {
+            status_code = Error::InvalidStatement;
+            grbl_msg_sendf(CLIENT_SERIAL, MsgLevel::Warning, "Skipped startup line with spindle enable command: %s", gcline);
+        } else {
+            status_code = gc_execute_line(gcline, CLIENT_SERIAL);
+        }
         report_execute_startup_message(gcline, status_code, CLIENT_SERIAL);
     }
+
+    // Safety baseline: make sure spindle output is off after startup script processing.
+    gc_state.modal.spindle = SpindleState::Disable;
+    gc_state.spindle_speed = 0;
+    spindle->stop();
 }

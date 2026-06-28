@@ -127,6 +127,7 @@ void mks_draw_common_pupup_info(char *title,char *line1, char *line2);
 void mks_draw_common_popup_info_com(char *title, char *line1, char *line2, lv_event_cb_t event_cb_yes);
 void common_pupup_info_del(void);
 void common_popup_del(void);
+void close_global_popup(void);
 void global_popup_del(void);
 void common_popup_com_del(void);
 void cavre_popup_del(void);

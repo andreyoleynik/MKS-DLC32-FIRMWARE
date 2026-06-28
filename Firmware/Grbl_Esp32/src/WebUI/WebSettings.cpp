@@ -36,6 +36,7 @@
 #include "../mks/MKS_draw_lvgl.h"
 #include "../mks/MKS_draw_print.h"
 #include "../mks/MKS_draw_ready.h"
+#include "../mks/MKS_draw_carving.h"
 #endif
 
 namespace WebUI {
@@ -712,12 +713,38 @@ namespace WebUI {
 
 #ifdef ENABLE_SD_CARD
 #ifdef TFT_LVGL_UI
+    static void syncTs35PrintFilenameOnRemoteRun(char* parameter) {
+        char uiFileName[128] = { 0 };
+        sd_get_current_filename(uiFileName, sizeof(uiFileName));
+
+        // Prefer the actual opened SD filename; WebUI parameter formatting can vary.
+        if (uiFileName[0] != '\0') {
+            get_print_file_name(uiFileName);
+            return;
+        }
+
+        if (parameter == nullptr || *parameter == '\0') {
+            return;
+        }
+
+        String path = trim(parameter);
+        if (path.length() == 0) {
+            return;
+        }
+
+        if (path[0] != '/') {
+            path = "/" + path;
+        }
+
+        // get_print_file_name uses strcpy internally, so clamp to its known buffer size.
+        snprintf(uiFileName, sizeof(uiFileName), "%s", path.c_str());
+        get_print_file_name(uiFileName);
+    }
+
     static void syncTs35PrintUiOnRemoteRun() {
         mks_grbl.is_mks_ts35_flag = true;
-        if (mks_ui_page.mks_ui_page != MKS_UI_Pring) {
-            mks_lv_clean_ui();
-            mks_draw_print();
-        }
+        mks_lv_clean_ui();
+        mks_draw_print();
     }
 
     static void syncTs35ReadyUiOnRemoteStop() {
@@ -951,7 +978,8 @@ namespace WebUI {
         report_realtime_status(SD_client);
 
 #ifdef TFT_LVGL_UI
-        syncTs35PrintUiOnRemoteRun();
+    syncTs35PrintFilenameOnRemoteRun(parameter);
+    syncTs35PrintUiOnRemoteRun();
 #endif
         webPrintln("");
         return Error::Ok;

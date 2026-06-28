@@ -90,6 +90,7 @@ namespace Spindles {
         }
 
         spindle->init();
+        spindle->stop();
     }
 
     // ========================= Spindle ==================================

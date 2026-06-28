@@ -41,6 +41,7 @@ static char    comment[LINE_BUFFER_SIZE];  // Line to be executed. Zero-terminat
 static uint8_t line_flags           = 0;
 static uint8_t char_counter         = 0;
 static uint8_t comment_char_counter = 0;
+static bool    hard_limit_popup_active = false;
 
 typedef struct {
     char buffer[LINE_BUFFER_SIZE];
@@ -116,7 +117,7 @@ bool can_park() {
 void protocol_main_loop() {
 
     static bool first_restart = true;
-    uint16_t re_cmd[] = {0x18}; // 复位命令
+    const char re_cmd[] = {0x18, '\0'}; // Ctrl-X reset command as null-terminated byte string
 
     client_reset_read_buffer(CLIENT_ALL);
     empty_lines();
@@ -365,6 +366,11 @@ void protocol_execute_realtime() {
 // machine and controls the various real-time features Grbl has to offer.
 // NOTE: Do not alter this unless you know exactly what you are doing!
 void protocol_exec_rt_system() {
+    if (hard_limit_popup_active && (limits_get_state() == 0)) {
+        close_global_popup();
+        hard_limit_popup_active = false;
+    }
+
     ExecAlarm alarm = sys_rt_exec_alarm;  // Temp variable to avoid calling volatile multiple times.
     if (alarm != ExecAlarm::None) {       // Enter only if an alarm is pending
         // System alarm. Everything has shutdown by something that has gone severely wrong. Report
@@ -380,12 +386,14 @@ void protocol_exec_rt_system() {
             if(alarm == ExecAlarm::HardLimit) {
                 if(mks_ui_page.mks_ui_page != MKS_UI_TEST) {
                     draw_global_popup("Hard limit!");
+                    hard_limit_popup_active = true;
                 }
                 
             }else if(alarm == ExecAlarm::SoftLimit) {
                 if(mks_ui_page.mks_ui_page != MKS_UI_TEST) {
                     draw_global_popup("Soft limit!");
                 }
+                hard_limit_popup_active = false;
             }
             
                 // ui_move_ctrl.limit_dis_delay_count = 0;
