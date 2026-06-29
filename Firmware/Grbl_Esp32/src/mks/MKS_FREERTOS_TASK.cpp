@@ -140,6 +140,10 @@ static void mks_page_data_updata(void) {
         mks_grbl.pending_limit_popup = 0;
         draw_global_popup(p == 1 ? "Hard limit!" : "Soft limit!");  // popup_1_flag де-дупит
     }
+    // Авто-закрытие hard-limit попапа при отжатии концевиков — только в LVGL-задаче (lv_obj_del safe)
+    if (mks_grbl.popup_1_flag && (limits_get_state() == 0)) {
+        close_global_popup();
+    }
 
     if(mks_ui_page.mks_ui_page == MKS_UI_PAGE_LOADING) {
         /* Do not updata */
