@@ -773,6 +773,49 @@ namespace WebUI {
         return path;
     }
 
+    static String noLeadingSlash(const String& path) {
+        if (path.length() > 0 && path[0] == '/') {
+            return path.substring(1);
+        }
+        return path;
+    }
+
+    static bool sdExistsCompat(const String& path) {
+        if (SD.exists(path.c_str())) {
+            return true;
+        }
+        String alt = noLeadingSlash(path);
+        return (alt != path) ? SD.exists(alt.c_str()) : false;
+    }
+
+    static bool sdMkdirCompat(const String& path) {
+        if (SD.mkdir(path.c_str())) {
+            return true;
+        }
+        String alt = noLeadingSlash(path);
+        return (alt != path) ? SD.mkdir(alt.c_str()) : false;
+    }
+
+    static bool sdRemoveCompat(const String& path) {
+        if (SD.remove(path.c_str())) {
+            return true;
+        }
+        String alt = noLeadingSlash(path);
+        return (alt != path) ? SD.remove(alt.c_str()) : false;
+    }
+
+    static File sdOpenCompat(const String& path, const char* mode) {
+        File f = SD.open(path.c_str(), mode);
+        if (f) {
+            return f;
+        }
+        String alt = noLeadingSlash(path);
+        if (alt != path) {
+            return SD.open(alt.c_str(), mode);
+        }
+        return f;
+    }
+
     // Создаёт все компоненты пути к файлу (без самого файла), если они не существуют.
     static void mkdirs_for(const String& filePath) {
         int start = 1;  // skip leading '/'
@@ -782,8 +825,8 @@ namespace WebUI {
                 break;  // last component is the file name — stop
             }
             String dir = filePath.substring(0, sep);
-            if (!SD.exists(dir.c_str())) {
-                SD.mkdir(dir.c_str());
+            if (!sdExistsCompat(dir)) {
+                sdMkdirCompat(dir);
             }
             start = sep + 1;
         }
@@ -800,16 +843,22 @@ namespace WebUI {
 
         mkdirs_for(path);
 
-        if (SD.exists(path.c_str())) {
-            SD.remove(path.c_str());
+        if (sdExistsCompat(path)) {
+            sdRemoveCompat(path);
         }
 
-        File outFile = SD.open(path.c_str(), FILE_WRITE);
+        File outFile = sdOpenCompat(path, FILE_WRITE);
         if (!outFile) {
             webPrintln("BACKUP: Cannot open settings backup file");
             SD.end();
             return Error::FsFailedOpenFile;
         }
+
+        // Header keeps the backup human-readable and safe to replay as command stream.
+        outFile.println("; GRBL_ESP32 settings backup");
+        outFile.println("; Replay this file line-by-line while controller is IDLE");
+        outFile.println("; Lines starting with ';' or '#' are comments");
+        outFile.println("# --- settings begin ---");
 
         uint16_t count = 0;
         for (Setting* s = Setting::List; s; s = s->next()) {
@@ -860,7 +909,7 @@ namespace WebUI {
             return (state == SDState::NotPresent) ? Error::FsFailedMount : Error::FsFailedBusy;
         }
 
-        File inFile = SD.open(path.c_str(), FILE_READ);
+        File inFile = sdOpenCompat(path, FILE_READ);
         if (!inFile) {
             webPrintln("RESTORE: Cannot open settings file");
             SD.end();
