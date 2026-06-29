@@ -295,7 +295,7 @@ void report_init_message(uint8_t client) {
 
 // Grbl help message
 void report_grbl_help(uint8_t client) {
-    grbl_send(client, "[HLP:$$ $+ $# $S $L $G $I $N $x=val $Nx=line $J=line $SLP $C $X $F $E=err $LASTRESET $INFO ~ ! ? ctrl-x]\r\n");
+    grbl_send(client, "[HLP:$$ $+ $# $S $L $G $I $N $x=val $Nx=line $J=line $SLP $C $X $F $E=err $LASTRESET $INFO $BACKUP[=path] $RESTORE[=path] ~ ! ? ctrl-x]\r\n");
 }
 
 // Prints current probe parameters. Upon a probe command, these parameters are updated upon a

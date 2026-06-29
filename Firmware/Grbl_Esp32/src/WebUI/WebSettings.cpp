@@ -773,18 +773,32 @@ namespace WebUI {
         return path;
     }
 
-    static Error backupSettingsToSD(char* parameter, AuthenticationLevel auth_level) {  // ESP223
+    // Создаёт все компоненты пути к файлу (без самого файла), если они не существуют.
+    static void mkdirs_for(const String& filePath) {
+        int start = 1;  // skip leading '/'
+        while (true) {
+            int sep = filePath.indexOf('/', start);
+            if (sep < 0) {
+                break;  // last component is the file name — stop
+            }
+            String dir = filePath.substring(0, sep);
+            if (!SD.exists(dir.c_str())) {
+                SD.mkdir(dir.c_str());
+            }
+            start = sep + 1;
+        }
+    }
+
+    static Error backupSettingsToSD(char* parameter, AuthenticationLevel auth_level) {  // ESP223 / BACKUP
         String path = normalizeSettingsPath(parameter);
 
         SDState state = get_sd_state(true);
         if (state != SDState::Idle) {
-            webPrintln((state == SDState::NotPresent) ? "No SD card" : "Busy");
+            webPrintln((state == SDState::NotPresent) ? "BACKUP: No SD card" : "BACKUP: Busy");
             return (state == SDState::NotPresent) ? Error::FsFailedMount : Error::FsFailedBusy;
         }
 
-        if (!SD.exists("/Settings")) {
-            SD.mkdir("/Settings");
-        }
+        mkdirs_for(path);
 
         if (SD.exists(path.c_str())) {
             SD.remove(path.c_str());
@@ -792,7 +806,7 @@ namespace WebUI {
 
         File outFile = SD.open(path.c_str(), FILE_WRITE);
         if (!outFile) {
-            webPrintln("Cannot open settings backup file");
+            webPrintln("BACKUP: Cannot open settings backup file");
             SD.end();
             return Error::FsFailedOpenFile;
         }
@@ -827,28 +841,28 @@ namespace WebUI {
 
         outFile.close();
         SD.end();
-        webPrintln("Saved settings to ", path);
+        webPrintln("BACKUP: Saved settings to ", path);
         return Error::Ok;
     }
 
-    static Error restoreSettingsFromSD(char* parameter, AuthenticationLevel auth_level) {  // ESP224
+    static Error restoreSettingsFromSD(char* parameter, AuthenticationLevel auth_level) {  // ESP224 / RESTORE
         String path = normalizeSettingsPath(parameter);
 
         if (sys.state == State::Cycle || sys.state == State::Jog || sys.state == State::Homing ||
             sys.state == State::CheckMode || (sys.state == State::Hold && !sys.suspend.bit.holdComplete)) {
-            webPrintln("Busy");
+            webPrintln("RESTORE: Busy");
             return Error::IdleError;
         }
 
         SDState state = get_sd_state(true);
         if (state != SDState::Idle) {
-            webPrintln((state == SDState::NotPresent) ? "No SD card" : "Busy");
+            webPrintln((state == SDState::NotPresent) ? "RESTORE: No SD card" : "RESTORE: Busy");
             return (state == SDState::NotPresent) ? Error::FsFailedMount : Error::FsFailedBusy;
         }
 
         File inFile = SD.open(path.c_str(), FILE_READ);
         if (!inFile) {
-            webPrintln("Cannot open settings file");
+            webPrintln("RESTORE: Cannot open settings file");
             SD.end();
             return Error::FsFailedOpenFile;
         }
@@ -883,7 +897,7 @@ namespace WebUI {
             char lineBuf[256];
             if (line.length() >= sizeof(lineBuf)) {
                 ++skipped;
-                webPrintln("Skipped too long line: ", String(lineNumber));
+                webPrintln("RESTORE: Skipped too long line: ", String(lineNumber));
                 continue;
             }
 
@@ -895,7 +909,7 @@ namespace WebUI {
                 ++applied;
             } else {
                 ++skipped;
-                webPrintln("Skipped line ", String(lineNumber) + " error:" + String((int)err));
+                webPrintln("RESTORE: Skipped line ", String(lineNumber) + " error:" + String((int)err));
             }
 
             if (((applied + skipped) & 0x1F) == 0) {
@@ -905,8 +919,8 @@ namespace WebUI {
 
         inFile.close();
         SD.end();
-        webPrintln("Restore done. Applied:", String(applied));
-        webPrintln("Skipped:", String(skipped));
+        webPrintln("RESTORE: Done. Applied:", String(applied));
+        webPrintln("RESTORE: Skipped:", String(skipped));
         return (applied > 0) ? Error::Ok : Error::InvalidValue;
     }
 
