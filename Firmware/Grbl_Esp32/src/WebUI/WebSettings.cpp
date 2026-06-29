@@ -793,6 +793,7 @@ namespace WebUI {
         File outFile = SD.open(path.c_str(), FILE_WRITE);
         if (!outFile) {
             webPrintln("Cannot open settings backup file");
+            SD.end();
             return Error::FsFailedOpenFile;
         }
 
@@ -825,6 +826,7 @@ namespace WebUI {
         }
 
         outFile.close();
+        SD.end();
         webPrintln("Saved settings to ", path);
         return Error::Ok;
     }
@@ -847,6 +849,7 @@ namespace WebUI {
         File inFile = SD.open(path.c_str(), FILE_READ);
         if (!inFile) {
             webPrintln("Cannot open settings file");
+            SD.end();
             return Error::FsFailedOpenFile;
         }
 
@@ -901,6 +904,7 @@ namespace WebUI {
         }
 
         inFile.close();
+        SD.end();
         webPrintln("Restore done. Applied:", String(applied));
         webPrintln("Skipped:", String(skipped));
         return (applied > 0) ? Error::Ok : Error::InvalidValue;
@@ -1085,7 +1089,7 @@ namespace WebUI {
         while (file) {
             if (file.isDirectory()) {
                 if (levels) {
-                    listDirLocalFS(fs, file.name(), levels - 1, client);
+                    listDirLocalFS(fs, file.path(), levels - 1, client);
                 }
             } else {
                 grbl_sendf(CLIENT_ALL, "[FILE:%s|SIZE:%d]\r\n", file.name(), file.size());
@@ -1113,7 +1117,7 @@ namespace WebUI {
             tailName             = tailName ? tailName + 1 : file.name();
             if (file.isDirectory() && levels) {
                 j->begin_array(tailName);
-                listDirJSON(fs, file.name(), levels - 1, j);
+                listDirJSON(fs, file.path(), levels - 1, j);
                 j->end_array();
             } else {
                 j->begin_object();
@@ -1191,11 +1195,6 @@ namespace WebUI {
         }
 
         //Stop everything
-#if defined(ENABLE_WIFI)
-        if (WiFi.getMode() != WIFI_MODE_NULL) {
-            wifi_config.StopWiFi();
-        }
-#endif
 #if defined(ENABLE_BLUETOOTH)
         if (bt_config.Is_BT_on()) {
             bt_config.end();
@@ -1203,6 +1202,14 @@ namespace WebUI {
 #endif
         //if On start proper service
         if (!on) {
+#if defined(ENABLE_WIFI)
+            // НЕ зовём StopWiFi() напрямую: [ESP115] может исполняться из protocol-task
+            // (serial), а delete _socket_server/_webserver под clientCheckTask = UAF.
+            // Реконфиг делает WiFiConfig::handle() (clientCheckTask) по флагу, неблокирующе.
+            if (WiFi.getMode() != WIFI_MODE_NULL) {
+                wifi_config.pending_wifi_reconfig = 2;  // OFF
+            }
+#endif
             webPrintln("[MSG: Radio is Off]");
             return Error::Ok;
         }
@@ -1216,7 +1223,7 @@ namespace WebUI {
                 return Error::WifiFailBegin;
 
 #    else
-                wifi_config.begin();
+                wifi_config.pending_wifi_reconfig = 1;  // (пере)запуск WiFi на clientCheckTask (UAF-safe, неблок.)
                 return Error::Ok;
 #    endif
             case ESP_BT:
@@ -1224,6 +1231,11 @@ namespace WebUI {
                 webPrintln("Bluetooth is not enabled!");
                 return Error::BtFailBegin;
 #    else
+#        if defined(ENABLE_WIFI)
+                if (WiFi.getMode() != WIFI_MODE_NULL) {
+                    wifi_config.pending_wifi_reconfig = 2;  // стоп WiFi перед BT
+                }
+#        endif
                 bt_config.begin();
                 return Error::Ok;
 #    endif

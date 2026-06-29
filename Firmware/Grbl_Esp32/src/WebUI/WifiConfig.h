@@ -112,11 +112,17 @@ namespace WebUI {
         static bool        mks_StartSTA();
         static bool        mks_ConnectSTA2AP();
 
+        // Запрос реконфига WiFi от ДРУГИХ задач (тач mks_wifi_connect — LVGL-задача,
+        // [ESP115] setRadioState). Реальный StopWiFi/begin + create/destroy серверов
+        // делает ТОЛЬКО handle() (clientCheckTask) — иначе delete _socket_server/_webserver
+        // под web_server.handle() = use-after-free. 0=нет, 1=restart(connect), 2=off.
+        static volatile uint8_t pending_wifi_reconfig;
+
         ~WiFiConfig();
 
     private:
         static bool   ConnectSTA2AP();
-        static void   WiFiEvent(WiFiEvent_t event);
+        static void   WiFiEvent(arduino_event_id_t event, arduino_event_info_t info);
         static String _hostname;
         static bool   _events_registered;
     };

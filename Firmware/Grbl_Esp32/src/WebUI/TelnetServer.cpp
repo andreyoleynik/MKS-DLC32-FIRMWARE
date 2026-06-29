@@ -164,6 +164,16 @@ namespace WebUI {
         return false;
     }
 
+    bool Telnet_Server::has_free_slot()
+    {
+        for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
+        {
+            if (!telnet_server[i].is_connected())
+                return true;
+        }
+        return false;
+    }
+
     void Telnet_Server::write(uint8_t client, const uint8_t* buffer, size_t size)
     {
         if(client == CLIENT_ALL)

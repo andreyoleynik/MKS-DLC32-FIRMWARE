@@ -278,6 +278,7 @@ void limits_go_home(uint8_t cycle_mask) {
 uint8_t limit_pins[MAX_N_AXIS][2] = { { X_LIMIT_PIN, X2_LIMIT_PIN }, { Y_LIMIT_PIN, Y2_LIMIT_PIN }, { Z_LIMIT_PIN, Z2_LIMIT_PIN } };
 
 uint8_t limit_mask = 0;
+static uint16_t limit_isr_attached = 0;  // бит на (axis*2+gang): пин с реально привязанным ISR
 
 void limits_init() {
     limit_mask = 0;
@@ -292,10 +293,15 @@ void limits_init() {
             if ((pin = limit_pins[axis][gang_index]) != UNDEFINED_PIN) {
                 pinMode(pin, mode);
                 limit_mask |= bit(axis);
+                int slot = axis * 2 + gang_index;
                 if (hard_limits->get()) {
                     attachInterrupt(pin, isr_limit_switches, CHANGE);
-                } else {
+                    limit_isr_attached |= bit(slot);
+                } else if (limit_isr_attached & bit(slot)) {
+                    // detachInterrupt только если ISR реально был привязан — иначе под
+                    // arduino-esp32 2.0.x сыплет 'gpio_isr_handler_remove ... not installed'
                     detachInterrupt(pin);
+                    limit_isr_attached &= ~bit(slot);
                 }
 
                 if (limit_sw_queue == NULL) {
@@ -323,9 +329,11 @@ void limits_disable() {
     auto n_axis = number_axis->get();
     for (int axis = 0; axis < n_axis; axis++) {
         for (int gang_index = 0; gang_index < 2; gang_index++) {
+            int slot = axis * 2 + gang_index;
             uint8_t pin = limit_pins[axis][gang_index];
-            if (pin != UNDEFINED_PIN) {
+            if (pin != UNDEFINED_PIN && (limit_isr_attached & bit(slot))) {
                 detachInterrupt(pin);
+                limit_isr_attached &= ~bit(slot);
             }
         }
     }

@@ -2,6 +2,7 @@
 #include "MKS_draw_print.h"
 #include "MKS_draw_tool.h"
 #include "../Probe.h"
+#include "MKS_draw_lvgl.h"
 
 #define DISP_TASK_STACK                 4096*2
 #define DISP_TASK_PRO                   2
@@ -132,6 +133,14 @@ static void mks_page_data_updata(void) {
     }
 #endif
     
+    // Лимит-попап строим ТОЛЬКО в LVGL-задаче (protocol-task лишь ставит флаг) — иначе
+    // мутация дерева LVGL из двух задач рушит его (краш во время задания при лимите).
+    if (mks_grbl.pending_limit_popup != 0 && mks_ui_page.mks_ui_page != MKS_UI_TEST) {
+        uint8_t p = mks_grbl.pending_limit_popup;
+        mks_grbl.pending_limit_popup = 0;
+        draw_global_popup(p == 1 ? "Hard limit!" : "Soft limit!");  // popup_1_flag де-дупит
+    }
+
     if(mks_ui_page.mks_ui_page == MKS_UI_PAGE_LOADING) {
         /* Do not updata */
         return ;
