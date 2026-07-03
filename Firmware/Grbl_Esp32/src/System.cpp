@@ -24,6 +24,7 @@
 // Declare system global variable structure
 system_t               sys;
 bool sys_position_changed;
+bool sys_homed;
 int32_t  sys_position[MAX_N_AXIS];        // Real-time machine (aka home) position vector in steps.
 int32_t                sys_probe_position[MAX_N_AXIS];  // Last probe position in machine coordinates and steps.
 volatile Probe         sys_probe_state;                 // Probing state value.  Used to coordinate the probing cycle with stepper ISR.

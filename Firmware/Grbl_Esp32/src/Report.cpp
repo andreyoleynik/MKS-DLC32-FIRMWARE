@@ -592,12 +592,15 @@ void report_realtime_status(uint8_t client) {
     strcat(status, report_state_text());
 
     // Report position
-    float* print_position = system_get_mpos();
+    float  zero_position[MAX_N_AXIS] = { 0 };
+    float* print_position            = sys_position_changed ? system_get_mpos() : zero_position;
     if (bit_istrue(status_mask->get(), RtStatus::Position)) {
         strcat(status, "|MPos:");
     } else {
         strcat(status, "|WPos:");
-        mpos_to_wpos(print_position);
+        if (sys_position_changed) {
+            mpos_to_wpos(print_position);
+        }
     }
     report_util_axis_values(print_position, temp);
     strcat(status, temp);

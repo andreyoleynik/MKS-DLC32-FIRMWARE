@@ -142,17 +142,18 @@ void limits_go_home(uint8_t cycle_mask) {
                 // Set target direction based on cycle mask and homing cycle approach state.
                 // NOTE: This happens to compile smaller than any other implementation tried.
                 auto mask = homing_dir_mask->get();
+                float travel = approach ? max_travel : homing_pulloff_for_axis(idx);
                 if (bit_istrue(mask, bit(idx))) {
                     if (approach) {
-                        target[idx] = -max_travel;
+                        target[idx] = -travel;
                     } else {
-                        target[idx] = max_travel;
+                        target[idx] = travel;
                     }
                 } else {
                     if (approach) {
-                        target[idx] = max_travel;
+                        target[idx] = travel;
                     } else {
-                        target[idx] = -max_travel;
+                        target[idx] = -travel;
                     }
                 }
                 // Apply axislock to the step port pins active in this cycle.
@@ -269,10 +270,12 @@ void limits_go_home(uint8_t cycle_mask) {
             } else {
                 sys_position[idx] = (mpos - pulloff) * steps;
             }
+            sys_position_changed = true;
         }
     }
     sys.step_control = {};                      // Return step control to normal operation.
     motors_set_homing_mode(cycle_mask, false);  // tell motors homing is done
+    sys_homed = true;
 }
 
 uint8_t limit_pins[MAX_N_AXIS][2] = { { X_LIMIT_PIN, X2_LIMIT_PIN }, { Y_LIMIT_PIN, Y2_LIMIT_PIN }, { Z_LIMIT_PIN, Z2_LIMIT_PIN } };

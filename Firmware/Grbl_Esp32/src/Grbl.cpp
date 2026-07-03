@@ -68,6 +68,7 @@ void grbl_init() {
     system_ini();     // Configure pinout pins and pin-change interrupt (Renamed due to conflict with esp32 files)
     init_motors();
     sys_position_changed = false;
+    sys_homed            = false;
     memset(sys_position, 0, sizeof(sys_position));  // Clear machine position.
     machine_init();                                 // weak definition in Grbl.cpp does nothing
     

@@ -251,7 +251,8 @@ void ready_data_updata(void) {
 
     static uint8_t wifi_ref_count = 0;
     static float mks_print_position[MAX_N_AXIS];
-    float* print_position = system_get_mpos();
+    float zero_position[MAX_N_AXIS] = { 0 };
+    float* print_position           = sys_position_changed ? system_get_mpos() : zero_position;
 
     format_ready_axis_value(xpos_str, sizeof(xpos_str), 'X', print_position[0]);
     format_ready_axis_value(ypos_str, sizeof(ypos_str), 'Y', print_position[1]);
@@ -261,7 +262,9 @@ void ready_data_updata(void) {
     lv_label_set_static_text(ready_src.ready_label_m_ypos, ypos_str);
     lv_label_set_static_text(ready_src.ready_label_m_zpos, zpos_str);
 
-    mpos_to_wpos(print_position);
+    if (sys_position_changed) {
+        mpos_to_wpos(print_position);
+    }
     format_ready_axis_value(m_xpos_str, sizeof(m_xpos_str), 'X', print_position[0]);
     format_ready_axis_value(m_ypos_str, sizeof(m_ypos_str), 'Y', print_position[1]);
     format_ready_axis_value(m_zpos_str, sizeof(m_zpos_str), 'Z', print_position[2]);

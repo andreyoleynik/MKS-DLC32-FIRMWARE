@@ -1187,15 +1187,24 @@ void mks_print_data_updata(void) {
     static char m_y_pos[24];
     static char m_z_pos[24];
 
-    float* mpos = system_get_mpos();
-    machine_pos[0] = mpos[0];
-    machine_pos[1] = mpos[1];
-    machine_pos[2] = mpos[2];
+    if (sys_position_changed) {
+        float* mpos = system_get_mpos();
+        machine_pos[0] = mpos[0];
+        machine_pos[1] = mpos[1];
+        machine_pos[2] = mpos[2];
 
-    work_pos[0] = machine_pos[0];
-    work_pos[1] = machine_pos[1];
-    work_pos[2] = machine_pos[2];
-    mpos_to_wpos(work_pos);
+        work_pos[0] = machine_pos[0];
+        work_pos[1] = machine_pos[1];
+        work_pos[2] = machine_pos[2];
+        mpos_to_wpos(work_pos);
+    } else {
+        machine_pos[0] = 0;
+        machine_pos[1] = 0;
+        machine_pos[2] = 0;
+        work_pos[0]    = 0;
+        work_pos[1]    = 0;
+        work_pos[2]    = 0;
+    }
 
     snprintf(print_data_updata.print_pwr_str, sizeof(print_data_updata.print_pwr_str), "Spindle:%d%%", sys_rt_s_override);
     print_src.print_Label_power = mks_lv_label_updata(print_src.print_Label_power, print_data_updata.print_pwr_str);

@@ -317,6 +317,7 @@ static void stepper_pulse_func() {
             } else {
                 sys_position[axis]++;
             }
+            sys_position_changed = true;
         }
     }
 

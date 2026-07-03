@@ -314,6 +314,10 @@ Error home(int cycle) {
     mc_homing_cycle(cycle);
 #endif
     if (!sys.abort) {             // Execute startup scripts after successful homing.
+        // Homing should clear ad-hoc work zeroing (G92), otherwise WPos can remain shifted
+        // from a previous manual zero even when MPos has been re-established by $H.
+        clear_vector(gc_state.coord_offset);
+        system_flag_wco_change();
         sys.state = State::Idle;  // Set to IDLE when complete.
         st_go_idle();             // Set steppers to the settings idle state before returning.
         if (cycle == HOMING_CYCLE_ALL) {

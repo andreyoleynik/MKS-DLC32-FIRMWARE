@@ -88,6 +88,8 @@ namespace Motors {
     bool RcServo::set_homing_mode(bool isHoming) {
         sys_position[_axis_index] =
             axis_settings[_axis_index]->home_mpos->get() * axis_settings[_axis_index]->steps_per_mm->get();  // convert to steps
+        sys_position_changed = true;
+        sys_homed            = true;
 
         set_location();   // force the PWM to update now
         vTaskDelay(750);  // give time to move

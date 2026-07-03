@@ -128,6 +128,7 @@ union ControlPins {
 
 // NOTE: These position variables may need to be declared as volatiles, if problems arise.
 extern bool sys_position_changed;
+extern bool sys_homed;
 extern int32_t sys_position[MAX_N_AXIS];        // Real-time machine (aka home) position vector in steps.
 extern int32_t sys_probe_position[MAX_N_AXIS];  // Last probe position in machine coordinates and steps.
 

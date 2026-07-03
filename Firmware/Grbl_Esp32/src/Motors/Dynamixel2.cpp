@@ -194,6 +194,8 @@ namespace Motors {
         }
         sys_position[_axis_index] =
             axis_settings[_axis_index]->home_mpos->get() * axis_settings[_axis_index]->steps_per_mm->get();  // convert to steps
+        sys_position_changed = true;
+        sys_homed            = true;
 
         set_disable(false);
         set_location();  // force the PWM to update now
@@ -230,6 +232,8 @@ namespace Motors {
             int32_t temp = map(dxl_position, DXL_COUNT_MIN, DXL_COUNT_MAX, pos_min_steps, pos_max_steps);
 
             sys_position[_axis_index] = temp;
+            sys_position_changed      = true;
+            sys_homed                 = true;
 
             plan_sync_position();
 
