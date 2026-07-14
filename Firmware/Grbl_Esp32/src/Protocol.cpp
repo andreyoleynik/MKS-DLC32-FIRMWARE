@@ -323,10 +323,41 @@ void protocol_main_loop() {
 void protocol_buffer_synchronize() {
     // If system is queued, ensure cycle resumes if the auto start flag is present.
     protocol_auto_cycle_start();
+    // Диагностика редкого зависания при выполнении файла (напр. станок «висит» на M3/M4 —
+    // spindle->sync() ждёт тут завершения предыдущего блока движения, которое почему-то не
+    // приходит). Раньше это молча зависало навсегда без единой строчки в логе, что делало
+    // проблему недиагностируемой. Если ожидание длится дольше порога — один раз пишем в лог
+    // состояние (sys.state, есть ли текущий блок в планировщике, номер строки SD-файла), это
+    // НЕ прерывает ожидание и не меняет поведение — просто даёт зацепку в логе при следующем
+    // повторении. Порог короче времени задержки watchdog'а намеренно не выбирается — сам цикл
+    // ожидания не меняется.
+    const uint32_t STALL_WARN_MS = 8000;
+    uint32_t       sync_start_ms = millis();
+    bool           stall_logged  = false;
     do {
         protocol_execute_realtime();  // Check and execute run-time commands
         if (sys.abort) {
             return;  // Check for system abort
+        }
+        if (!stall_logged && (millis() - sync_start_ms) > STALL_WARN_MS) {
+            stall_logged = true;
+#ifdef ENABLE_SD_CARD
+            grbl_msg_sendf(CLIENT_ALL,
+                           MsgLevel::Info,
+                           "[MSG:buffer_synchronize stall >%lums state=%d block=%s sd_state=%d sd_line=%u]",
+                           (unsigned long)STALL_WARN_MS,
+                           static_cast<int>(sys.state),
+                           plan_get_current_block() ? "yes" : "no",
+                           static_cast<int>(get_sd_state(false)),
+                           (unsigned)sd_get_current_line_number());
+#else
+            grbl_msg_sendf(CLIENT_ALL,
+                           MsgLevel::Info,
+                           "[MSG:buffer_synchronize stall >%lums state=%d block=%s]",
+                           (unsigned long)STALL_WARN_MS,
+                           static_cast<int>(sys.state),
+                           plan_get_current_block() ? "yes" : "no");
+#endif
         }
     } while (plan_get_current_block() || (sys.state == State::Cycle));
 }
