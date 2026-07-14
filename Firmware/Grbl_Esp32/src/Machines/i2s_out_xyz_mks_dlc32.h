@@ -47,7 +47,10 @@
 #endif
 #define N_AXIS 3
 
-#define HTTP_UPLOAD_BUFLEN 1024*10
+#ifndef HTTP_UPLOAD_BUFLEN
+// Can be overridden via build_flags (see ini/mks_dlc32.ini)
+#define HTTP_UPLOAD_BUFLEN 768
+#endif
 
 #define ENABLE_SOFTWARE_DEBOUNCE
 

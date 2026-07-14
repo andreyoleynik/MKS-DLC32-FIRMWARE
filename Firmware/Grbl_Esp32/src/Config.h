@@ -142,7 +142,7 @@ const int MAX_N_AXIS = 3;
 #define ENABLE_SERIAL2SOCKET_IN
 #define ENABLE_SERIAL2SOCKET_OUT
 
-#define TELNET_CLIENTS_TOTAL 2
+#define TELNET_CLIENTS_TOTAL 1
 
 // Captive portal is used when WiFi is in access point mode.  It lets the
 // WebUI come up automatically in the browser, instead of requiring the user

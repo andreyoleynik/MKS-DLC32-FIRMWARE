@@ -4,14 +4,15 @@
 - Пользователь на Windows должен прошить устройство без установки Python и PlatformIO.
 
 Состав пакета (обязательно):
-- flash_preserve_nvs_full_win.bat
-- flash_fs_only_win.bat
-- firmware/bootloader.bin
-- firmware/partitions.bin
-- firmware/boot_app0.bin
-- firmware/firmware.bin
-- firmware/spiffs.bin
-- tools/esptool.exe
+- flash_preserve_nvs_full_win.bat (скрипт прошивки)
+- flash_fs_only_win.bat (скрипт прошивки)
+- firmware/bootloader.bin -> 0x1000
+- firmware/partitions.bin -> 0x8000
+- firmware/boot_app0.bin -> 0xE000
+- firmware/firmware.bin -> 0x10000
+- firmware/firmware.bin -> 0x310000
+- firmware/spiffs.bin -> 0x610000
+- tools/esptool.exe (утилита прошивки)
 
 Важно:
 - Скрипт полной прошивки сохраняет NVS (0x9000-0xDFFF), пользовательские настройки не стираются.

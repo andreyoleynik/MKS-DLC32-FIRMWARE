@@ -49,7 +49,10 @@
     #undef ENABLE_SD_CARD
 #endif
 
-#define HTTP_UPLOAD_BUFLEN 1024*10
+#ifndef HTTP_UPLOAD_BUFLEN
+// Can be overridden via build_flags (see ini/mks_dlc32.ini)
+#define HTTP_UPLOAD_BUFLEN 768
+#endif
 
 #define I2S_OUT_BCK                 GPIO_NUM_16
 #define I2S_OUT_WS                  GPIO_NUM_17

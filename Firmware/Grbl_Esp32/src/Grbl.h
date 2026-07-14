@@ -23,16 +23,9 @@
 // Grbl versioning system
 const char* const GRBL_VERSION       = "1.1";
 // const char* const GRBL_VERSION       = "1.3a";
-// __DATE__ = "Mmm DD YYYY" (11 chars), __TIME__ = "HH:MM:SS"
-// Build string: "Jun 22 2026-143512" — no colons so WebUI split(":") is safe
-static const char _grbl_build_str[] = {
-    __DATE__[0], __DATE__[1], __DATE__[2], __DATE__[3], __DATE__[4],
-    __DATE__[5], __DATE__[6], __DATE__[7], __DATE__[8], __DATE__[9], __DATE__[10],
-    '-',
-    __TIME__[0], __TIME__[1], __TIME__[3], __TIME__[4], __TIME__[6], __TIME__[7],
-    '\0'
-};
-const char* const GRBL_VERSION_BUILD = _grbl_build_str;
+// Generated at pre-build stage. Format: "Jun 22 2026-143512"
+// (no colons so WebUI split(":") remains safe).
+extern const char* const GRBL_VERSION_BUILD;
 
 //#include <sdkconfig.h>
 #include <Arduino.h>
