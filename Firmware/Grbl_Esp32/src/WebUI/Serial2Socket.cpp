@@ -19,6 +19,7 @@
 */
 
 #include "../Grbl.h"
+#include "../SDCard.h"
 
 #if defined(ENABLE_WIFI) && defined(ENABLE_HTTP)
 
@@ -166,8 +167,14 @@ namespace WebUI {
     void Serial_2_Socket::handle_flush() {
         // Чтение без лока безвредно: точную проверку делает flush() под мьютексом.
         // Переполнение сюда не доходит — write() флашит сам при заполнении.
-        if (_TXbufferSize > 0 && ((millis() - _lastflush) > FLUSHTIMEOUT)) {
-            log_i("[SOCKET]need flush, buffer size %d", _TXbufferSize);
+        if (_TXbufferSize > 0 && ((millis() - _lastflush) > FLUSHTIMEOUT)) {            // Во время заливки файла не дёргаем broadcastBIN() по таймеру лишний раз —
+            // каждый вызов таскает alloc/free во WebSocketsServer и усиливает
+            // фрагментацию кучи прямо во время приёма файла. write() всё равно
+            // форсирует flush при забивании буфера, так что данные не теряются —
+            // консольный вывод просто чуть задержится до конца загрузки.
+            if (get_sd_state(false) == SDState::BusyUploading) {
+                return;
+            }            log_i("[SOCKET]need flush, buffer size %d", _TXbufferSize);
             flush();
         }
     }

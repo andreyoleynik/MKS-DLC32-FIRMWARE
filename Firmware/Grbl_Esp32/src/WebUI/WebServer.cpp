@@ -1247,6 +1247,9 @@ namespace WebUI {
                     //Upload write
                     //**************
                 } else if (upload.status == UPLOAD_FILE_WRITE) {
+#    ifdef ENABLE_TELNET
+                    Telnet_Server::handle_all();  // не дать telnet протухнуть за время блокирующего парсинга upload'а
+#    endif
                     vTaskDelay(1 / portTICK_RATE_MS);
                     //check if file is available and no error
                     if (fsUploadFile && _upload_status == UploadStatusType::ONGOING) {
@@ -1815,6 +1818,16 @@ namespace WebUI {
                     //Upload write
                     //**************
                 } else if (upload.status == UPLOAD_FILE_WRITE) {
+                    // WebServer::handleClient() парсит весь multipart-body одним блокирующим
+                    // вызовом: пока не закончится приём файла, Telnet_Server::handle_all()
+                    // из главного цикла (WifiServices::handle()) не получает управления,
+                    // из-за чего RX-буфер telnet-сокета не вычитывается всё время загрузки
+                    // и удалённый клиент рвёт соединение по таймауту. Этот callback дергается
+                    // на каждый чанк (HTTP_UPLOAD_BUFLEN), так что подкачка telnet здесь же
+                    // держит соединение живым без отдельной FreeRTOS-задачи.
+#    ifdef ENABLE_TELNET
+                    Telnet_Server::handle_all();
+#    endif
                     vTaskDelay(1 / portTICK_RATE_MS);
                     if (sdUploadFile && (_upload_status == UploadStatusType::ONGOING) && (get_sd_state(false) == SDState::BusyUploading)) {
                         //no error write post data
@@ -1908,7 +1921,11 @@ namespace WebUI {
         if (_socket_server && _setupdone) {
             _socket_server->loop();
         }
-        if ((millis() - timeout) > 10000 && _socket_server && (_socket_server->connectedClients(false) > 0)) {
+        // Во время заливки файла на SD не гоним heartbeat — отдельный broadcastTXT()
+        // не критичен, а лишний alloc/free в WebSocketsServer прямо во время приёма
+        // multipart-тела только усугубляет фрагментацию кучи.
+        if ((millis() - timeout) > 10000 && _socket_server && (_socket_server->connectedClients(false) > 0) &&
+            (get_sd_state(false) != SDState::BusyUploading)) {
             // In single-WebUI mode heartbeat includes ACTIVE id for legacy UI behavior.
             if (!webui_secondary_enable || (webui_secondary_enable->get() == 0)) {
                 char pingMsg[24];

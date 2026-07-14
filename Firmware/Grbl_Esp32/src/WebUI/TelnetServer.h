@@ -67,32 +67,35 @@ namespace WebUI {
         uint16_t _RXbufferSize;
         uint16_t _RXbufferpos;
 
-        uint8_t _client_index;
+        uint8_t  _client_index;
+        uint32_t _last_activity_ms = 0;  // время последнего реального обмена данными (не просто poll)
+
+        // Таймаут, после которого «подключённый» (is_connected()==true), но молчащий
+        // слот считается зомби-соединением и может быть вытеснен новым входящим клиентом.
+        // На ESP32 при обрыве без корректного FIN (пропал WiFi у клиента, краш приложения)
+        // is_connected() может оставаться true практически бесконечно.
+        static const uint32_t STALE_TIMEOUT_MS = 5000;
 
         bool is_connected()
         {
             return _telnetClient.connected();
         }
 
-        void setup_client(WiFiClient& client)
-        {
-            _telnetClientIP = IPAddress(0, 0, 0, 0);
-
-            if(_telnetClient.connected())
-                _telnetClient.stop();
-            
-            _telnetClient = client;
-        }
+        void touch_activity();
+        void setup_client(WiFiClient& client);
 
     public:
         static void begin_all();
         static void handle_all();
         static void end_all();
 
+        bool is_stale();
+
         static void write(uint8_t client, const uint8_t* buffer, size_t size);
         static bool read(char* code, uint8_t* client);
         static bool attach_client(WiFiClient& client);
         static bool has_free_slot();  // есть ли свободный telnet-слот (для исходящего remote-канала)
+
 
         static int get_rx_buffer_available(uint8_t client);
 

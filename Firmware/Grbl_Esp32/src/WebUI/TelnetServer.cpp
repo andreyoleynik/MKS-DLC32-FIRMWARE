@@ -131,8 +131,27 @@ namespace WebUI {
 
             if(!client_found)
             {
+                // Все слоты «is_connected()==true», но это могут быть зомби-соединения
+                // (старый клиент отвалился без корректного FIN, TCP-стек не знает об этом).
+                // Заменяем самый старый по активности слот, если он превысил STALE_TIMEOUT_MS без трафика.
+                for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
+                {
+                    if (telnet_server[i].is_stale())
+                    {
+                        telnet_server[i].setup_client(client);
+
+                        String s = "[MSG:TELNET Reconnected (stale slot i:" + String(i) + " replaced)]\r\n";
+                        grbl_send(CLIENT_ALL, (char*)s.c_str());
+                        client_found = true;
+                        break;
+                    }
+                }
+            }
+
+            if(!client_found)
+            {
                 client.stop();
-                grbl_send(CLIENT_ALL, "[MSG:TELNET Clinet rejected");
+                grbl_send(CLIENT_ALL, "[MSG:TELNET Client rejected]\r\n");
             }
             }
         }
@@ -224,6 +243,32 @@ namespace WebUI {
         _RXbufferpos  = 0;
     }
 
+    void Telnet_Server::touch_activity()
+    {
+        _last_activity_ms = millis();
+    }
+
+    bool Telnet_Server::is_stale()
+    {
+        if (!is_connected())
+            return false;  // слот уже свободен, это обрабатывается отдельно
+
+        return (millis() - _last_activity_ms) > STALE_TIMEOUT_MS;
+    }
+
+    void Telnet_Server::setup_client(WiFiClient& client)
+    {
+#ifdef ENABLE_TELNET_WELCOME_MSG
+        _telnetClientIP = IPAddress(0, 0, 0, 0);
+#endif
+
+        if(_telnetClient.connected())
+            _telnetClient.stop();
+
+        _telnetClient = client;
+        touch_activity();
+    }
+
     bool Telnet_Server::begin() {
         end();
         _RXbufferSize = 0;
@@ -251,6 +296,8 @@ namespace WebUI {
         {
             //log_d("[TELNET out connected]");
             wsize = _telnetClient.write(buffer, size);
+            if (wsize > 0)
+                touch_activity();
             COMMANDS::wait(0);
         }
 
@@ -292,6 +339,7 @@ namespace WebUI {
                 if (readlen > 0) {
                     _telnetClient.read(buf, readlen);
                     push(buf, readlen);
+                    touch_activity();
                 }
                 return;
             }

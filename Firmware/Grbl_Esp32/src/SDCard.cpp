@@ -29,7 +29,6 @@ uint8_t                    SD_client     = CLIENT_SERIAL;
 // uint8_t                    SD_client     = CLIENT_SD;
 WebUI::AuthenticationLevel SD_auth_level = WebUI::AuthenticationLevel::LEVEL_GUEST;
 uint32_t                   sd_current_line_number;     // stores the most recent line number read from the SD
-uint32_t                   sd_total_line_number;       // stores the total number of lines in the current file
 static char                comment[LINE_BUFFER_SIZE];  // Line to be executed. Zero-terminated.
 
 // Сериализация доступа к глобальному myFile: protocol-task (readFileLine во время
@@ -212,23 +211,11 @@ boolean openFile(fs::FS& fs, const char* path) {
     if (!myFile) {
         return false;
     }
-    sd_total_line_number = 0;
-    bool     has_content  = false;
-    bool     last_was_nl   = true;
-    uint32_t total_lines   = 0;
-    while (myFile.available()) {
-        char c = myFile.read();
-        has_content = true;
-        last_was_nl  = (c == '\n');
-        if (c == '\n') {
-            total_lines++;
-        }
-    }
-    if (has_content && !last_was_nl) {
-        total_lines++;
-    }
-    sd_total_line_number = total_lines;
-    myFile.seek(0);
+    // Раньше здесь был полный побайтовый проход по файлу для подсчёта строк
+    // (нужен только для прогресса) — на больших файлах это занимало до 10+
+    // секунд, и станок всё это время «висел» перед стартом выполнения.
+    // Прогресс считаем по байтам (position()/size()) в sd_report_perc_complete(),
+    // это не требует предварительного скана и доступно сразу.
     set_sd_state(SDState::BusyPrinting);
     SD_ready_next          = false;  // this will get set to true when Grbl issues "ok" message
     sd_current_line_number = 0;
@@ -243,7 +230,6 @@ boolean closeFile() {
     set_sd_state(SDState::Idle);
     SD_ready_next          = false;
     sd_current_line_number = 0;
-    sd_total_line_number   = 0;
     myFile.close();
     return true;
 }
@@ -310,13 +296,13 @@ boolean readFileBuff(uint8_t *buf, uint32_t size) {
 
 
 // return a percentage complete 50.5 = 50.5%
+// Считаем по байтам (позиция/размер файла), а не по количеству строк:
+// подсчёт строк требовал полного предварительного скана файла при открытии,
+// что задерживало старт выполнения на больших файлах.
 float sd_report_perc_complete() {
     SdFileLock _lk;
     if (!myFile) {
         return 0.0;
-    }
-    if (sd_total_line_number > 0) {
-        return (float)sd_current_line_number / (float)sd_total_line_number * 100.0f;
     }
     return (float)myFile.position() / (float)myFile.size() * 100.0f;
 }
