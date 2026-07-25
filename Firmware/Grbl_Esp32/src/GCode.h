@@ -335,3 +335,10 @@ Error gc_execute_line(char* line, uint8_t client);
 
 // Set g-code parser position. Input in steps.
 void gc_sync_position();
+
+// Обнуляет систему координат G54 (и в NVS, и в gc_state, если она сейчас активна)
+// в 0,0,0,... По заразу пользователя: любой сдвиг G54, накопленный $MJ (см.
+// manual_adjust_apply_wcs_shift_from_session() в Protocol.cpp), должен стираться при
+// каждой перезагрузке станка и при каждом аппаратном хоуминге ($H) — то есть
+// $MJ-сдвиг не должен переживать ни выключение станка, ни референс дома.
+void gc_reset_g54_offset();

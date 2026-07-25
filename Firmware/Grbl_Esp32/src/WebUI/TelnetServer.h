@@ -82,6 +82,7 @@ namespace WebUI {
         }
 
         void touch_activity();
+        void reset_client();
         void setup_client(WiFiClient& client);
 
     public:

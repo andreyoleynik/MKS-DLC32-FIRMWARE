@@ -1124,7 +1124,7 @@ namespace WebUI {
         }
         
         webPrintln("");
-        listDir(SD, "/", 10, espresponse->client());
+        listDirAll(SD, "/", 10, espresponse->client());
         String ssd = "[SD Free:" + ESPResponseStream::formatBytes(SD.totalBytes() - SD.usedBytes());
         ssd += " Used:" + ESPResponseStream::formatBytes(SD.usedBytes());
         ssd += " Total:" + ESPResponseStream::formatBytes(SD.totalBytes());

@@ -78,6 +78,15 @@ bool mc_line(float* target, plan_line_data_t* pl_data) {
     // parser and planner are separate from the system machine positions, this is doable.
     // If the buffer is full: good! That means we are well ahead of the robot.
     // Remain in this loop until there is room in the buffer.
+    // ФИКС "10.02mm вместо 0.2mm" (см. Protocol.cpp manual_adjust_apply_wcs_shift_from_session):
+    // target[] здесь уже посчитан вызывающим кодом (gc_execute_line) в мм, в ТЕКУЩЕЙ на тот
+    // момент системе координат. Если ниже, во время ожидания места в буфере, произойдёт
+    // Hold + $MJ (сдвиг WCS) + Resume, то к моменту выхода из цикла pl.position/sys_position
+    // окажутся уже сдвинутыми, а этот target[] — ещё старым, что даёт блок с лишним пробегом
+    // ровно на величину сдвига. Запоминаем базовый сдвиг ДО ожидания и после него применяем
+    // разницу к target[], чтобы компенсировать сдвиг, случившийся "под нами".
+    float mc_line_shift_baseline[MAX_N_AXIS];
+    memcpy(mc_line_shift_baseline, mc_wcs_shift_accum, sizeof(mc_line_shift_baseline));
     do {
         protocol_execute_realtime();  // Check for any run-time commands
         if (sys.abort) {
@@ -90,6 +99,16 @@ bool mc_line(float* target, plan_line_data_t* pl_data) {
             break;
         }
     } while (1);
+    // Correct target[] for any WCS shift ($MJ during Hold) that occurred while we were waiting.
+    {
+        auto n_axis = number_axis->get();
+        if (n_axis > MAX_N_AXIS) {
+            n_axis = MAX_N_AXIS;
+        }
+        for (int i = 0; i < n_axis; i++) {
+            target[i] += (mc_wcs_shift_accum[i] - mc_line_shift_baseline[i]);
+        }
+    }
     // Plan and queue motion into planner buffer
     // uint8_t plan_status; // Not used in normal operation.
     if (sys_pl_data_inflight == pl_data) {
@@ -379,6 +398,11 @@ void mc_homing_cycle(uint8_t cycle_mask) {
     }
     // Homing cycle complete! Setup system for normal operation.
     // -------------------------------------------------------------------------------------
+    // По просьбе пользователя: аппаратный хоуминг ($H) тоже должен стирать любой сдвиг G54,
+    // накопленный командами $MJ во время предыдущей сессии (см. gc_reset_g54_offset() и
+    // GCode.h). Хоуминг задаёт новую физическую референсную точку станка, так что старый
+    // рабочий сдвиг относительно неё больше не имеет смысла.
+    gc_reset_g54_offset();
     // Sync gcode parser and planner positions to homed position.
     gc_sync_position();
 

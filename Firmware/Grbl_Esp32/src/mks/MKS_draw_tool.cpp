@@ -202,7 +202,15 @@ void mks_draw_tool(void) {
 
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_Firmware_version, 10, 145, FW_NAME, 400);
 
-    snprintf(build_info, sizeof(build_info), "Build: %s %s", __DATE__, __TIME__);
+    // ВАЖНО: __DATE__/__TIME__ подставляются компилятором при компиляции ИМЕННО этого .cpp
+    // файла — если он не менялся и PlatformIO не стал его пересобирать (инкрементальная
+    // сборка), тут останется дата СТАРОЙ сборки, даже если сама прошивка (другие файлы)
+    // только что была честно пересобрана и перелинкована. GRBL_VERSION_BUILD, наоборот —
+    // это extern-символ из BuildInfo.cpp, который scripts/gen_build_info.py перегенерирует
+    // с новым штампом времени ПЕРЕД КАЖДОЙ сборкой без исключений, а линковка firmware.elf
+    // всегда выполняется заново — поэтому именно он гарантированно отражает время последней
+    // реальной сборки, независимо от того, какие файлы были перекомпилированы.
+    snprintf(build_info, sizeof(build_info), "Build: %s", GRBL_VERSION_BUILD);
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_build_version, 10, 235, build_info, 400);
 
     label_heap_info = mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_heap_info, 10, 270, "Heap free/min/lfb: -/-/-", 400);

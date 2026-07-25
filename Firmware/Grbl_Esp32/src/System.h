@@ -141,6 +141,10 @@ extern volatile Percent       sys_rt_r_override;               // Rapid feed ove
 extern volatile Percent       sys_rt_s_override;               // Spindle override value in percent
 extern volatile bool          cycle_stop;
 extern volatile void* sys_pl_data_inflight;  // holds a plan_line_data_t while cartesian_to_motors has taken ownership of a line motion
+// Accumulated WCS shift (mm) applied by $MJ (manual jog during Hold) via apply_wcs_shift_from_session().
+// mc_line() uses this to detect/correct for a coordinate shift that happened while a target[] value
+// was already computed (in the OLD coordinate frame) but still waiting for planner buffer room.
+extern float mc_wcs_shift_accum[MAX_N_AXIS];
 #ifdef DEBUG
 extern volatile bool sys_rt_exec_debug;
 #endif

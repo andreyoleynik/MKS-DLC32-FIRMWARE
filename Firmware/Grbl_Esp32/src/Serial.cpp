@@ -127,14 +127,29 @@ void client_init() {
     // create a task to check for incoming data
     // For a 4096-word stack, uxTaskGetStackHighWaterMark reports 244 words available
     // after WebUI attaches.
+    //
+    // ПЕРЕНЕСЕНО НА CORE 0 (было SUPPORT_TASK_CORE=1, тот же core, что и главный Grbl
+    // main-loop/protocol_main_loop()/st_prep_buffer()): диагностика (grbl_msg_sendf в
+    // discard_stale_planner_block()/try_resume_stale_block(), Protocol.cpp) показала, что
+    // WebUI::wifi_config.handle() -> web_server.handle() (вызываются ИЗ ЭТОЙ задачи, см.
+    // WifiServices::handle() и цикл ниже) иногда блокируется на 8+ СЕКУНД при подключении/
+    // разрыве WebSocket-соединения (лог: "WebUI Disconnected!"/"WebUI connected!" точно в
+    // момент "buffer_synchronize stall >8000ms"). Хотя clientCheckTask и раньше был отдельной
+    // FreeRTOS-задачей, ДВЕ задачи на ОДНОМ ядре всё равно делят одно и то же процессорное
+    // время — пока эта задача не отдаёт управление (нет vTaskDelay внутри самой блокирующей
+    // операции), задачи main-loop на том же ядре просто не получают CPU, отсюда и многосекундные
+    // "залипания" движения несмотря на весь self-heal в Protocol.cpp. Ядро 0 уже используется
+    // LVGL-задачами (SUPPORT_LVGL_CORE) — совместное использование с UI-обновлениями остаётся
+    // приемлемым риском (возможные небольшие лаги LVGL при активности WebUI), тогда как ядро 1
+    // теперь освобождено ИСКЛЮЧИТЕЛЬНО для CNC-таймингов (main-loop, степпер ISR и т.п.), что
+    // критичнее для целостности движения/позиции, чем отзывчивость экрана.
     xTaskCreatePinnedToCore(clientCheckTask,    // task
                             "clientCheckTask",  // name for task
                             4096*2,               // size of task stack
                             NULL,               // parameters
                             3,                  // priority
                             &clientCheckTaskHandle,
-                            SUPPORT_TASK_CORE  // must run the task on same core
-                                               // core
+                            SUPPORT_LVGL_CORE  // core 0 — deliberately NOT the CNC core, see comment above
     );
 }
 

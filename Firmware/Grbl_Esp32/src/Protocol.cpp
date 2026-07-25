@@ -34,6 +34,7 @@
 
 #include "SDJobPolicy.h"
 #include <ctype.h>
+#include <stdarg.h>
 
 static void protocol_exec_rt_suspend();
 
@@ -59,6 +60,22 @@ static void empty_lines() {
     for (uint8_t client = 0; client < CLIENT_COUNT; client++) {
         empty_line(client);
     }
+}
+
+// Возвращает true, если у какого-либо клиента (Serial/Telnet/...) в буфере лежит
+// НАЧАТАЯ, но ещё НЕ ЗАВЕРШЕННАЯ строка (символы уже приняты, но '\r'/'\n' ещё не
+// пришёл). Используется, чтобы не дать резюму (cycleStart) прервать suspend-цикл
+// ровно в момент, когда пользователь уже начал отправлять (или ещё не полностью
+// доставлена по сети) команда $MJ=... — иначе её "хвост" придёт уже ПОСЛЕ выхода
+// из suspend-цикла, где manual_adjust_poll_clients() больше не вызывается, и эти
+// байты либо потеряются, либо будут неверно интерпретированы как G-код.
+static bool manual_adjust_input_pending() {
+    for (uint8_t client = 0; client < CLIENT_COUNT; client++) {
+        if (client_lines[client].len > 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 Error add_char_to_line(char c, uint8_t client) {
@@ -92,20 +109,11 @@ Error add_char_to_line(char c, uint8_t client) {
 //   $MJ=X2Y-1.5F200
 // Смещения ВСЕГДА относительны текущему (реальному) положению.
 //
-// Главное отличие от обычного jog: станок физически двигается, но программно
-// «не узнаёт» об этом — как если бы оператор покрутил мотор рукой. Для этого
-// после каждого такого перемещения счётчик шагов (sys_position), позиция
-// парсера (gc_state.position) и позиция планировщика (pl.position)
-// принудительно откатываются к значению, которое было ДО начала правки в
-// этой паузе. Поэтому:
-//   - координаты (что рабочие, что машинные) в отчётах не меняются;
-//   - при последующем возобновлении задания (обычный '~', WebUI, кнопка —
-//     без какой-либо особой обработки с нашей стороны) программа продолжится
-//     от «старой» точки отсчёта, но станок к этому моменту уже физически
-//     смещён — то есть весь остаток задания просто жёстко сдвинется на
-//     введённую поправку, как и требуется при правке сверловки платы.
-// Смещения системы координат (G92/G54 и т.п.) здесь вообще не используются —
-// они гарантированно не трогаются.
+// Принцип коррекции: станок физически двигается И это движение остаётся в
+// трекинге (без "скрытия"/отката sys_position). Когда пауза завершается,
+// суммарная поправка за сессию MJ переносится в активную рабочую систему
+// координат (G54..G59) — так остаток текущего файла и следующие файлы идут с
+// нужным сдвигом, но без рассинхрона между реальной и логической позицией.
 //
 // Перемещения выполняются как отдельные "парковочные" движения (тот же
 // механизм mc_parking_motion(), которым уже пользуется retract/restore
@@ -119,10 +127,25 @@ Error add_char_to_line(char c, uint8_t client) {
 // ---------------------------------------------------------------------------
 static const float MANUAL_ADJUST_DEFAULT_RATE = 300.0;  // мм/мин, если F не указана
 
-static bool    manual_adjust_active = false;
-static int32_t manual_adjust_frozen_steps[MAX_N_AXIS] = { 0 };  // "официальная" (замороженная) позиция в шагах
-static int32_t manual_adjust_real_steps[MAX_N_AXIS]   = { 0 };  // истинная физическая позиция, шаги
-static float   manual_adjust_real_mpos[MAX_N_AXIS]    = { 0 };  // фактическая физическая позиция, мм
+static bool    manual_adjust_used_in_hold = false;
+static bool    manual_adjust_session_open = false;
+static bool    manual_adjust_command_active = false;
+static int32_t manual_adjust_session_start_steps[MAX_N_AXIS] = { 0 };  // sys_position at first $MJ= in this hold
+
+// MJ-диагностика: обычный канал + гарантированно USB (в обход фильтра $Message/Level).
+static void manual_adjust_logf(const char* format, ...) {
+    char    line_buf[256];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line_buf, sizeof(line_buf), format, args);
+    va_end(args);
+    grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", line_buf);
+    grbl_sendf(CLIENT_SERIAL, "%s\r\n", line_buf);
+}
+
+static void manual_adjust_report_hidden_delta(const char* tag) {
+    (void)tag;
+}
 
 static bool manual_adjust_allowed() {
     // Разрешено только когда задание реально стоит (полная остановка после Hold),
@@ -130,10 +153,89 @@ static bool manual_adjust_allowed() {
     return sys.state == State::Hold && sys.suspend.bit.holdComplete;
 }
 
+// КОРЕНЬ ПРОБЛЕМЫ "после resume пара верных ходов, потом скачок": $MJ физически двигает
+// станок и синхронизирует sys_position/gc_state.position (MPos) с реальностью — это верно
+// для бухгалтерии, но G-код с АБСОЛЮТНЫМИ координатами (G90, подавляющее большинство файлов)
+// переводит целевую точку в MPos как programmed_WPos + coord_system[csys] + coord_offset(G92).
+// Если coord_system не сдвинуть на ту же величину, что и физическую позицию, то первая же
+// абсолютная команда после resume своим target'ом "утащит" станок назад к НЕисправленной
+// координате — внешне выглядит как рывок/уход в сторону после нескольких верных движений
+// (это были уже заранее посчитанные в планировщике блоки ДО паузы, которые двигаются как чисто
+// относительный шаговый путь и потому корректно едут параллельно вместе со сдвигом).
+// Поэтому при выходе из паузы переносим суммарный физический сдвиг за сессию $MJ в активную
+// рабочую систему координат (G54..G59) ОДНИМ разом — тогда все дальнейшие абсолютные цели в
+// текущем и следующих файлах автоматически считаются уже с поправкой.
+static void manual_adjust_apply_wcs_shift_from_session() {
+    if (!manual_adjust_session_open) {
+        return;
+    }
+    manual_adjust_session_open = false;
+    auto n_axis = number_axis->get();
+    if (n_axis > MAX_N_AXIS) {
+        n_axis = MAX_N_AXIS;
+    }
+    bool any_delta = false;
+    for (int i = 0; i < n_axis; i++) {
+        if (sys_position[i] != manual_adjust_session_start_steps[i]) {
+            any_delta = true;
+            break;
+        }
+    }
+    if (!any_delta) {
+        return;
+    }
+    float delta_mm[MAX_N_AXIS] = { 0 };
+    for (int i = 0; i < n_axis; i++) {
+        float spm   = axis_settings[i]->steps_per_mm->get();
+        delta_mm[i] = ((float)(sys_position[i] - manual_adjust_session_start_steps[i])) / spm;
+    }
+    float wcs[MAX_N_AXIS];
+    coords[gc_state.modal.coord_select]->get(wcs);
+    for (int i = 0; i < n_axis; i++) {
+        wcs[i] += delta_mm[i];
+        gc_state.coord_system[i] = wcs[i];
+    }
+    coords[gc_state.modal.coord_select]->set(wcs);
+    // ФИКС "10.02mm вместо 0.2mm" (подтверждено диагностикой PLAN_NEW_BLOCK):
+    // Если в момент срабатывания $MJ строка G-кода уже была распарсена (target[] в мм
+    // посчитан ДО сдвига WCS), но mc_line() ещё ждёт свободного места в буфере планировщика
+    // (см. цикл ожидания в MotionControl.cpp), то к моменту, когда место освободится,
+    // pl.position/sys_position уже сдвинуты этим $MJ, а сохранённый target[] — ещё старый.
+    // plan_buffer_line() посчитает шаги как (СТАРЫЙ target) - (НОВАЯ база) — получится
+    // лишний пробег ровно на величину сдвига. Копим сдвиг здесь; mc_line() применит
+    // эту же поправку к своему "зависшему" target[] перед постановкой блока в очередь.
+    for (int i = 0; i < n_axis; i++) {
+        mc_wcs_shift_accum[i] += delta_mm[i];
+    }
+    // КРИТИЧЕСКИЙ ФИКС (подтверждено полным логом с реальными координатами станка):
+    // pl.position (внутренняя позиция ПЛАНИРОВЩИКА, используется ТОЛЬКО для расчёта
+    // ЧИСЛА ШАГОВ следующего блока — см. Planner.cpp plan_buffer_line()) НЕ обновляется
+    // системными ($MJ) движениями — это намеренно (см. "Block system motion from updating
+    // this data" в Planner.cpp), чтобы не портить нормальную работу планировщика во время
+    // парковочных перемещений. НО это значит, что pl.position остаётся на позиции ДО $MJ.
+    // Следующий обычный блок файла считает своё number-of-steps как
+    // target_steps - pl.position(СТАРАЯ) — то есть получает ЛИШНИЕ шаги ровно на величину
+    // физического сдвига $MJ (в тесте: сдвиг +10мм → следующий блок реально проехал на 10мм
+    // больше своей заявленной длины, WPos "уехал" с 150 на 160). Синхронизируем pl.position
+    // (и gc_state.position — они должны совпадать) с РЕАЛЬНОЙ физической позицией СРАЗУ
+    // ПОСЛЕ сдвига coord_system на ту же величину: тогда WPos (= MPos - WCO) остаётся
+    // прежним (сдвиги друг друга компенсируют), а внутренняя бухгалтерия планировщика
+    // (шаги следующего блока) считается уже от актуальной физической позиции — без лишнего
+    // пробега.
+    gc_sync_position();
+    plan_sync_position();
+    manual_adjust_logf("[MSG:MJ apply_wcs_shift d=%.3f,%.3f,%.3f coord=%d]",
+                       delta_mm[0],
+                       delta_mm[1],
+                       delta_mm[2],
+                       (int)gc_state.modal.coord_select);
+}
+
 // Сбрасывает "активную сессию" правки. Вызывается когда пауза завершается
 // (любым способом), чтобы следующая пауза начала захват позиции с чистого листа.
 static void manual_adjust_end_session() {
-    manual_adjust_active = false;
+    manual_adjust_apply_wcs_shift_from_session();
+    manual_adjust_used_in_hold = false;
 }
 
 // Выполняет одно изолированное перемещение к абсолютной станочной координате,
@@ -152,22 +254,6 @@ static void manual_adjust_move_to(float* target_mpos, float feed_rate) {
     mc_parking_motion(target_mpos, pl_data);
 }
 
-// После реального перемещения "стирает" его из памяти прошивки: откатывает
-// sys_position (шаги) на замороженное значение и пересинхронизирует с ним
-// позицию парсера и планировщика. Снаружи всё выглядит так, будто станок
-// не двигался.
-static void manual_adjust_erase_motion_from_tracking() {
-    auto n_axis = number_axis->get();
-    if (n_axis > MAX_N_AXIS) {
-        n_axis = MAX_N_AXIS;
-    }
-    for (int i = 0; i < n_axis; i++) {
-        sys_position[i] = manual_adjust_frozen_steps[i];
-    }
-    gc_sync_position();
-    plan_sync_position();
-}
-
 // Разбирает и выполняет "$MJ=<ось><число>...[F<число>]" — относительное смещение
 // от ТЕКУЩЕГО (реального) положения по осям X/Y/Z (и т.д.), с необязательной подачей F.
 // client передаётся только для отметки источника команды в диагностическом логе.
@@ -175,7 +261,7 @@ static Error manual_adjust_jog(const char* value, uint8_t client) {
     if (!manual_adjust_allowed()) {
         return Error::IdleError;
     }
-    grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "[MSG:MJ raw client=%d value=\"%s\"]", (int)client, value);
+    manual_adjust_logf("[MSG:MJ raw client=%d value=\"%s\"]", (int)client, value);
     static const char axis_letters[MAX_N_AXIS] = { 'X', 'Y', 'Z' };
     float   delta[MAX_N_AXIS]     = { 0 };
     bool    axis_seen[MAX_N_AXIS] = { false };
@@ -198,7 +284,7 @@ static Error manual_adjust_jog(const char* value, uint8_t client) {
             pos++;
             float f;
             if (!read_float(value, &pos, &f)) {
-                grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "[MSG:MJ error BadNumberFormat axis=%c pos=%d]", c, (int)pos);
+                manual_adjust_logf("[MSG:MJ error BadNumberFormat axis=%c pos=%d]", c, (int)pos);
                 return Error::BadNumberFormat;
             }
             delta[axis_idx]     = f;
@@ -209,13 +295,13 @@ static Error manual_adjust_jog(const char* value, uint8_t client) {
             pos++;
             float f;
             if (!read_float(value, &pos, &f) || f <= 0) {
-                grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "[MSG:MJ error BadNumberFormat F pos=%d]", (int)pos);
+                manual_adjust_logf("[MSG:MJ error BadNumberFormat F pos=%d]", (int)pos);
                 return Error::BadNumberFormat;
             }
             feed_rate = f;
             continue;
         }
-        grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "[MSG:MJ error InvalidStatement char='%c' pos=%d]", c, (int)pos);
+        manual_adjust_logf("[MSG:MJ error InvalidStatement char='%c' pos=%d]", c, (int)pos);
         return Error::InvalidStatement;
     }
     bool any_axis = false;
@@ -227,51 +313,86 @@ static Error manual_adjust_jog(const char* value, uint8_t client) {
     if (!any_axis) {
         return Error::InvalidStatement;
     }
-    if (!manual_adjust_active) {
-        // Первая команда правки в этой паузе: запомнить и "официальную" (замороженную)
-        // позицию в шагах, и фактическую физическую позицию (в шагах и в мм) — от неё
-        // дальше считаем относительные смещения.
-        memcpy(manual_adjust_frozen_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
-        memcpy(manual_adjust_real_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
-        memcpy(manual_adjust_real_mpos, system_get_mpos(), sizeof(float) * MAX_N_AXIS);
-        manual_adjust_active = true;
+    if (!manual_adjust_session_open) {
+        memcpy(manual_adjust_session_start_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
+        manual_adjust_session_open = true;
     }
-    float target[MAX_N_AXIS];
-    memcpy(target, manual_adjust_real_mpos, sizeof(float) * MAX_N_AXIS);
+    manual_adjust_used_in_hold = true;
+    float   target[MAX_N_AXIS];
+    int32_t target_steps[MAX_N_AXIS];
+    memcpy(target, system_get_mpos(), sizeof(float) * MAX_N_AXIS);
+    memcpy(target_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
     for (int i = 0; i < n_axis; i++) {
+        if (!axis_seen[i]) {
+            continue;
+        }
         target[i] += delta[i];
+        float steps_per_mm = axis_settings[i]->steps_per_mm->get();
+        target_steps[i] = lround(target[i] * steps_per_mm);
     }
-    grbl_msg_sendf(CLIENT_ALL,
-                   MsgLevel::Info,
-                   "[MSG:MJ parsed dX=%.3f(%d) dY=%.3f(%d) dZ=%.3f(%d) F=%.1f from=%.3f,%.3f,%.3f to=%.3f,%.3f,%.3f]",
-                   delta[0], (int)axis_seen[0],
-                   delta[1], (int)axis_seen[1],
-                   delta[2], (int)axis_seen[2],
-                   feed_rate,
-                   manual_adjust_real_mpos[0], manual_adjust_real_mpos[1], manual_adjust_real_mpos[2],
-                   target[0], target[1], target[2]);
+    manual_adjust_logf("[MSG:MJ parsed dX=%.3f(%d) dY=%.3f(%d) dZ=%.3f(%d) F=%.1f from=%.3f,%.3f,%.3f to=%.3f,%.3f,%.3f]",
+                       delta[0],
+                       (int)axis_seen[0],
+                       delta[1],
+                       (int)axis_seen[1],
+                       delta[2],
+                       (int)axis_seen[2],
+                       feed_rate,
+                       system_get_mpos()[0],
+                       system_get_mpos()[1],
+                       system_get_mpos()[2],
+                       target[0],
+                       target[1],
+                       target[2]);
     if (soft_limits->get() && limitsCheckTravel(target)) {
-        grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "[MSG:MJ error TravelExceeded]");
+        manual_adjust_logf("[MSG:MJ error TravelExceeded]");
         return Error::TravelExceeded;
     }
-    // ВАЖНО: plan_buffer_line() для системных (парковочных) перемещений берёт
-    // текущую позицию именно из sys_position (см. Planner.cpp), а не из pl.position.
-    // Между командами $MJ= sys_position всегда "заморожен" (см. erase ниже), поэтому
-    // перед самим перемещением нужно на время вернуть туда ИСТИННУЮ физическую позицию —
-    // иначе planner посчитает дистанцию от исходной точки паузы, а не от текущей, и
-    // движение получится с накоплением всех предыдущих правок (баг: нетронутая ось
-    // тоже начинает двигаться на суммарную величину прошлых смещений).
-    memcpy(sys_position, manual_adjust_real_steps, sizeof(int32_t) * MAX_N_AXIS);
+    manual_adjust_command_active = true;
+    // ВАЖНО: корректируем реальную позицию станка и затем синхронизируем parser/planner
+    // с новой физической точкой. Это делает MJ обычной ручной подстройкой, а не скрытым
+    // смещением.
+    int32_t mj_before_steps[MAX_N_AXIS];
+    memcpy(mj_before_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
+    st_debug_dump_prep("MJ prep_before_move");
     manual_adjust_move_to(target, feed_rate);
-    // После завершения перемещения sys_position обновлён ISR-ом до истинных физических
-    // шагов — запоминаем это как новую истинную позицию перед тем, как её скрыть.
-    memcpy(manual_adjust_real_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
-    memcpy(manual_adjust_real_mpos, target, sizeof(float) * MAX_N_AXIS);
-    manual_adjust_erase_motion_from_tracking();
-    grbl_msg_sendf(CLIENT_ALL,
-                   MsgLevel::Info,
-                   "[MSG:MJ done reported_mpos=%.3f,%.3f,%.3f]",
-                   system_get_mpos()[0], system_get_mpos()[1], system_get_mpos()[2]);
+    st_debug_dump_prep("MJ prep_after_move");
+    int32_t mj_after_steps[MAX_N_AXIS];
+    memcpy(mj_after_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
+    manual_adjust_logf("[MSG:MJ steps before=(%ld,%ld,%ld) target=(%ld,%ld,%ld) after=(%ld,%ld,%ld) d=(%ld,%ld,%ld)]",
+                       (long)mj_before_steps[0],
+                       (long)mj_before_steps[1],
+                       (long)mj_before_steps[2],
+                       (long)target_steps[0],
+                       (long)target_steps[1],
+                       (long)target_steps[2],
+                       (long)mj_after_steps[0],
+                       (long)mj_after_steps[1],
+                       (long)mj_after_steps[2],
+                       (long)(mj_after_steps[0] - mj_before_steps[0]),
+                       (long)(mj_after_steps[1] - mj_before_steps[1]),
+                       (long)(mj_after_steps[2] - mj_before_steps[2]));
+    // НАСТОЯЩАЯ ПРИЧИНА "несколько верных ходов, потом скачок, потом снова нормально":
+    // gc_state.position и pl.position — это НЕ "текущая физическая позиция". Это позиция
+    // ПОСЛЕ ПОСЛЕДНЕГО УЖЕ ПОСТАВЛЕННОГО В ОЧЕРЕДЬ БЛОКА из файла (она проставляется сразу
+    // при постановке блока в очередь, а не по факту физического прохождения). Если в момент
+    // паузы в очереди планировщика оставался не один блок, а несколько (обычная ситуация —
+    // main-loop успевает поставить в очередь несколько строк файла, пока идёт замедление),
+    // то gc_state.position/pl.position указывают на КОНЕЦ последнего из них — а физически
+    // степпер стоит где-то РАНЬШЕ по этой цепочке (соответствует rem=... в resume-логах).
+    // Раньше здесь стояли gc_sync_position()/plan_sync_position() — они принудительно
+    // затирали gc_state.position/pl.position ТЕКУЩЕЙ физической позицией (sys_position),
+    // разрушая эту "позицию после очереди". Уже поставленные в очередь блоки это не портит
+    // (у них abs target_steps и относительные Bresenham-шаги уже зафиксированы — потому и
+    // едут корректно, "несколько верных ходов" в логах) — но ПЕРВЫЙ НОВЫЙ блок из
+    // продолжающегося файла считает свою цель/дистанцию именно от gc_state.position/
+    // pl.position, и получает НЕВЕРНОЕ значение → тот самый "скачок" (размер зависит от
+    // того, сколько блоков было в очереди на момент паузы — то самое "иногда пара мм, иногда
+    // 50-100мм"). Поэтому больше НЕ трогаем gc_state.position/pl.position здесь — они
+    // корректно переживают всю MJ-сессию без вмешательства, как и предусмотрено тем, что
+    // plan_buffer_line() сам не обновляет pl.position для systemMotion-блоков (см. Planner.cpp).
+    manual_adjust_command_active = false;
+    manual_adjust_logf("[MSG:MJ done reported_mpos=%.3f,%.3f,%.3f]", system_get_mpos()[0], system_get_mpos()[1], system_get_mpos()[2]);
     return Error::Ok;
 }
 
@@ -297,10 +418,18 @@ static void manual_adjust_poll_clients() {
                 } else {
                     result = Error::AnotherInterfaceBusy;
                 }
-                report_status_message(result, client);
+                // IMPORTANT: Do not use report_status_message() here.
+                // During SD printing, report_status_message(error) closes the SD file
+                // and reports "error:... in SD file at line ...", even when this error
+                // actually came from a side-channel pause command.
+                if (result == Error::Ok) {
+                    grbl_send(client, "ok\r\n");
+                } else {
+                    grbl_sendf(client, "error:%d\r\n", static_cast<int>(result));
+                }
                 empty_line(client);
             } else if (res == Error::Overflow) {
-                report_status_message(Error::Overflow, client);
+                grbl_sendf(client, "error:%d\r\n", static_cast<int>(Error::Overflow));
                 empty_line(client);
             }
         }
@@ -389,6 +518,30 @@ void protocol_main_loop() {
             char fileLine[255];
                 if (readFileLine(fileLine, 255)) {
                     SD_ready_next = false;
+                    // ДИАГНОСТИКА (ищем причину чередования shifted/unshifted координат круга):
+                    // печатаем КАЖДУЮ прочитанную с SD строку с её номером и текущим coord_system
+                    // сдвигом, чтобы увидеть, не читается/выполняется ли какая-то строка повторно
+                    // или не в том порядке относительно момента apply_wcs_shift.
+                    // ВАЖНО: некоторые файлы (в т.ч. из реальных CAM-программ) используют "\r" без
+                    // "\n" как разделитель строк. readFileLine() отдаёт fileLine БЕЗ этого "\r" в
+                    // конце (сам разделитель), но если внутри строки случайно остался "\r" (или
+                    // предыдущая строка была прочитана с хвостовым "\r" из-за особенностей CR-only
+                    // файла), он ломает вывод лога построчно. Заменяем ЛЮБЫЕ control-символы внутри
+                    // строки на пробел перед печатью — на исполнение G-кода это не влияет (это
+                    // только для логирования), но делает вывод читаемым построчно.
+                    {
+                        char clean_line[255];
+                        size_t clean_len = 0;
+                        for (const char* p = fileLine; *p != '\0' && clean_len < sizeof(clean_line) - 1; p++) {
+                            clean_line[clean_len++] = ((unsigned char)*p < 0x20) ? ' ' : *p;
+                        }
+                        clean_line[clean_len] = '\0';
+                        grbl_sendf(CLIENT_SERIAL,
+                                   "[MSG:SD_LINE #%u wcs_x=%.3f line=\"%s\"]\r\n",
+                                   (unsigned)sd_get_current_line_number(),
+                                   gc_state.coord_system[0],
+                                   clean_line);
+                    }
                     report_status_message(execute_line(fileLine, SD_client, SD_auth_level), SD_client);
                 } 
                 else {
@@ -541,6 +694,161 @@ void protocol_main_loop() {
     return; /* Never reached */
 }
 
+// Безопасно снимает "зависший" текущий блок планировщика с очереди — используется и в
+// protocol_buffer_synchronize(), и в cycle_stop-ветке protocol_exec_rt_system() ниже (см.
+
+// ПОПЫТКА "БЕСШОВНОГО" САМОВОССТАНОВЛЕНИЯ (по просьбе пользователя: "исправлять на лету, чтобы
+// было незаметно"): вызывается ПЕРЕД discard_stale_planner_block() из cycle_stop-ветки. Идея:
+// когда ISR ставит cycle_stop, потому что буфер СЕГМЕНТОВ опустел, module-static состояние
+// подготовки в Stepper.cpp (pl_block/prep) НЕ сбрасывается st_go_idle() — оно продолжает
+// указывать на тот же самый недоеденный блок планировщика с тем же прогрессом (dt_remainder
+// и т.п.). Это ЗНАЧИТ, что можно буквально повторить те же самые действия, которые Grbl делает
+// при обычном старте цикла (см. cycleStart-ветку выше: `st_prep_buffer(); st_wake_up();`), и
+// движение продолжится СО ТОЧКИ, ГДЕ РЕАЛЬНО ОСТАНОВИЛСЯ СТЕППЕР — то есть подготовит сегменты
+// для оставшейся дистанции текущего блока и снова включит таймер/моторы. Внешне (для оператора
+// и для файла) это будет выглядеть как обычное продолжение сверления/движения без видимого сбоя.
+// Возвращает true, если была предпринята содержательная попытка резюме (были реальные mm to go)
+// — тогда discard_stale_planner_block() НЕ вызывается, работа продолжается. Возвращает false,
+// если восстанавливать было нечего (millimeters ~ 0) — тогда как и раньше используется тихий
+// discard. Мы НЕ можем на 100% гарантировать, что резюме сработает (напр. если сама причина
+// задержки ещё активна прямо сейчас) — но именно поэтому alarm-путь в discard_stale_planner_block()
+// остаётся как надёжный fallback: если резюме не помогло, на СЛЕДУЮЩЕМ cycle_stop (буфер сегментов
+// снова опустеет от того же блока, либо сработает 12с self-recovery в protocol_buffer_synchronize())
+// сработает уже он.
+static bool try_resume_stale_block(const char* context) {
+    // ПОВТОРНО ВКЛЮЧЕНО по просьбе пользователя: коренная причина "10.02mm вместо 0.2mm"
+    // (target[] в mc_line() оставался в СТАРОЙ системе координат, пока $MJ сдвигал WCS во
+    // время ожидания места в буфере планировщика — см. фикс в MotionControl.cpp mc_line()
+    // и mc_wcs_shift_accum в System.h/Protocol.cpp) теперь устранена и подтверждена. Именно
+    // эта гонка и приводила к ложным алармам здесь (стабильный/устаревший блок с "лишним"
+    // остатком ровно на величину сдвига). Раньше эта функция была отключена (safety-first),
+    // т.к. до фикса выше resume "устаревшего" блока молча доезжал этот лишний, ошибочный
+    // остаток. Теперь просто возобновляем прерванный decel-блок напрямую (минуя обычный
+    // cycleStart/разгон) — если он всё-таки останется "зависшим", основной alarm-путь в
+    // discard_stale_planner_block() ниже сработает как и раньше (fallback не убран).
+    plan_block_t* block = plan_get_current_block();
+    if (!block || block->millimeters <= 0.01f) {
+        return false;
+    }
+    manual_adjust_logf("%s auto-resume: resuming stale block rem=%.3fmm", context, block->millimeters);
+    sys.state = State::Cycle;
+    st_wake_up();
+    return true;
+}
+
+
+// комментарии там). КРИТИЧНО: тихо discard'ить безопасно ТОЛЬКО когда у блока не осталось
+// реальной непройденной дистанции (millimeters ~ 0, т.е. степпер физически докрутил весь
+// путь, просто бухгалтерия планировщика не успела вовремя это оформить). Если дистанция
+// заметно больше нуля — значит степпер физически НЕ проехал остаток пути (сегменты для
+// него так и не были сгенерированы до того, как ISR объявил буфер сегментов пустым), а
+// gc_state.position/pl.position/отчёт координат УЖЕ считают цель достигнутой (парсер
+// проставляет их сразу при постановке в очередь, не дожидаясь физического исполнения).
+// Тихий discard в этом случае оставляет РЕАЛЬНУЮ физическую позицию станка (sys_position)
+// отставшей от того, что показывает и на чём считает вся остальная программа — именно
+// так проявился баг "сверлит в воздухе, не доезжая до заготовки на 5-6мм": короткий
+// быстрый G0/G1 по Z был недовыполнен физически, но помечен как выполненный, и все
+// последующие относительные Z-цели в файле считались от неверной точки отсчёта, пока
+// пользователь не перепробировал высоту (что заново синхронизирует sys_position). Поэтому
+// при заметном остатке — не продолжаем молча, а глушим шпиндель/СОЖ и поднимаем тревогу,
+// чтобы оператор заметил проблему и заново взял референс, а не сверлил вслепую.
+//
+// Максимально подробная диагностика (по просьбе пользователя, т.к. проблема стала повторяться
+// чаще): логируем и в "тихом" (millimeters~0), и в "реальная потеря движения" случаях —
+// разница по осям между РЕАЛЬНОЙ физической позицией (system_get_mpos(), из sys_position/ISR)
+// и позицией, которую считает достигнутой парсер (gc_state.position) — это и есть прямое
+// числовое подтверждение/измерение рассинхрона, если он произошёл. Плюс параметры блока
+// (запрограммированная/максимальная скорость), состояние системы, SD-файл/строка, свободная
+// куча (heap) — просадки кучи часто коррелируют с WiFi/LVGL-активностью, которая, по гипотезе,
+// и задерживает st_prep_buffer() настолько, что возникает эта гонка — и аптайм для сопоставления
+// с прочими логами/временем на часах станка.
+static void discard_stale_planner_block(const char* context) {
+    plan_block_t* stale_block = plan_get_current_block();
+    if (!stale_block) {
+        return;
+    }
+    // Копируем сразу — system_get_mpos() возвращает указатель на статический буфер,
+    // переиспользуемый при каждом вызове.
+    float real_mpos[MAX_N_AXIS];
+    memcpy(real_mpos, system_get_mpos(), sizeof(float) * MAX_N_AXIS);
+    auto n_axis = number_axis->get();
+    if (n_axis > MAX_N_AXIS) {
+        n_axis = MAX_N_AXIS;
+    }
+    char axes_diag[MAX_N_AXIS * 40];
+    axes_diag[0] = '\0';
+    static const char axis_letters[MAX_N_AXIS] = { 'X', 'Y', 'Z' };
+    for (int i = 0; i < n_axis; i++) {
+        char one[48];
+        snprintf(one,
+                 sizeof(one),
+                 "%s%c:real=%.3f,parser=%.3f,diff=%.3f",
+                 i ? " " : "",
+                 axis_letters[i],
+                 real_mpos[i],
+                 gc_state.position[i],
+                 gc_state.position[i] - real_mpos[i]);
+        strncat(axes_diag, one, sizeof(axes_diag) - strlen(axes_diag) - 1);
+    }
+    // Отправка по USB (CLIENT_SERIAL) намеренно ДУБЛИРУЕТСЯ отдельным raw-вызовом
+    // grbl_sendf() ниже, а не только через grbl_msg_sendf(CLIENT_ALL, ...). Причина:
+    // grbl_msg_sendf() САМ фильтрует по текущей настройке $Message/Level (по умолчанию
+    // Info, но могла быть понижена, в т.ч. случайно через WebUI) — если уровень окажется
+    // ниже MsgLevel::Info, сообщение НЕ уйдёт вообще никуда, включая USB. Пользователь
+    // сообщил, что проблема часто совпадает с подключением/обновлением WebUI во время
+    // выполнения файла — это ФАКТИЧЕСКИЙ ПОДОЗРЕВАЕМЫЙ ТРИГГЕР самой гонки (WebUI-запросы
+    // грузят main-loop и могут задерживать st_prep_buffer(), что и приводит к рассинхрону),
+    // а не просто совпадение по каналу вывода. Поэтому для этих диагностических сообщений
+    // критично гарантировать вывод на USB НЕЗАВИСИМО от $Message/Level и от того, что в
+    // это же самое время происходит с WebUI/WiFi-клиентами.
+    char line_buf[MAX_N_AXIS * 40 + 160];
+    snprintf(line_buf,
+             sizeof(line_buf),
+             "%s stale_block rem=%.3fmm prog_rate=%.1f rapid_rate=%.1f state=%d spindle_state=%d t=%lums heap=%u/%u",
+             context,
+             stale_block->millimeters,
+             stale_block->programmed_rate,
+             stale_block->rapid_rate,
+             static_cast<int>(sys.state),
+             static_cast<int>(spindle->get_state()),
+             (unsigned long)millis(),
+             (unsigned)ESP.getFreeHeap(),
+             (unsigned)xPortGetMinimumEverFreeHeapSize());
+    grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", line_buf);
+    grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", line_buf);  // guaranteed on USB, bypasses $Message/Level
+
+    snprintf(line_buf, sizeof(line_buf), "%s axes %s", context, axes_diag);
+    grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", line_buf);
+    grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", line_buf);
+#ifdef ENABLE_SD_CARD
+    snprintf(line_buf,
+             sizeof(line_buf),
+             "%s sd_state=%d sd_line=%u",
+             context,
+             static_cast<int>(get_sd_state(false)),
+             (unsigned)sd_get_current_line_number());
+    grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", line_buf);
+    grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", line_buf);
+#endif
+    if (stale_block->millimeters > 0.01f) {
+        snprintf(line_buf,
+                 sizeof(line_buf),
+                 "%s lost motion %.3fmm not executed - alarm instead of silent continue",
+                 context,
+                 stale_block->millimeters);
+        grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", line_buf);
+        grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", line_buf);
+        spindle->stop();
+        coolant_stop();
+        sys_rt_exec_alarm = ExecAlarm::AbortCycle;
+    } else {
+        snprintf(line_buf, sizeof(line_buf), "%s stale block discarded (fully executed)", context);
+        grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", line_buf);
+        grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", line_buf);
+    }
+    plan_discard_current_block();
+}
+
 // Block until all buffered steps are executed or in a cycle state. Works with feed hold
 // during a synchronize call, if it should happen. Also, waits for clean cycle end.
 void protocol_buffer_synchronize() {
@@ -554,20 +862,26 @@ void protocol_buffer_synchronize() {
     // НЕ прерывает ожидание и не меняет поведение — просто даёт зацепку в логе при следующем
     // повторении. Порог короче времени задержки watchdog'а намеренно не выбирается — сам цикл
     // ожидания не меняется.
-    const uint32_t STALL_WARN_MS = 8000;
-    uint32_t       sync_start_ms = millis();
-    bool           stall_logged  = false;
+    const uint32_t STALL_WARN_MS    = 8000;
+    const uint32_t STALL_RECOVER_MS = 12000;
+    uint32_t       sync_start_ms    = millis();
+    bool           stall_logged     = false;
+    bool           stall_recovered  = false;
     do {
+        // Re-assert auto-start while waiting: in rare races we can be left Idle with
+        // queued blocks and a cleared cycleStart bit.
+        protocol_auto_cycle_start();
         protocol_execute_realtime();  // Check and execute run-time commands
         if (sys.abort) {
             return;  // Check for system abort
         }
-        if (!stall_logged && (millis() - sync_start_ms) > STALL_WARN_MS) {
+        uint32_t elapsed_ms = millis() - sync_start_ms;
+        if (!stall_logged && elapsed_ms > STALL_WARN_MS) {
             stall_logged = true;
 #ifdef ENABLE_SD_CARD
             grbl_msg_sendf(CLIENT_ALL,
                            MsgLevel::Info,
-                           "[MSG:buffer_synchronize stall >%lums state=%d block=%s sd_state=%d sd_line=%u]",
+                           "buffer_synchronize stall >%lums state=%d block=%s sd_state=%d sd_line=%u",
                            (unsigned long)STALL_WARN_MS,
                            static_cast<int>(sys.state),
                            plan_get_current_block() ? "yes" : "no",
@@ -576,11 +890,24 @@ void protocol_buffer_synchronize() {
 #else
             grbl_msg_sendf(CLIENT_ALL,
                            MsgLevel::Info,
-                           "[MSG:buffer_synchronize stall >%lums state=%d block=%s]",
+                           "buffer_synchronize stall >%lums state=%d block=%s",
                            (unsigned long)STALL_WARN_MS,
                            static_cast<int>(sys.state),
                            plan_get_current_block() ? "yes" : "no");
 #endif
+        }
+        // Self-recovery for a stale planner head: if we're already Idle but the planner
+        // still reports a current block for too long, that block is non-executable stale state.
+        // Try the seamless on-the-fly resume first (see try_resume_stale_block()); only if that's
+        // not applicable/didn't apply (block already fully done) does discard_stale_planner_block()
+        // decide whether it's safe to silently drop or whether it's real lost motion requiring an alarm.
+        if (!stall_recovered && elapsed_ms > STALL_RECOVER_MS && sys.state == State::Idle && plan_get_current_block() &&
+            gc_state.modal.motion != Motion::ProbeToward && gc_state.modal.motion != Motion::ProbeTowardNoError &&
+            gc_state.modal.motion != Motion::ProbeAway && gc_state.modal.motion != Motion::ProbeAwayNoError) {
+            stall_recovered = true;
+            if (!try_resume_stale_block("buffer_synchronize")) {
+                discard_stale_planner_block("buffer_synchronize");
+            }
         }
     } while (plan_get_current_block() || (sys.state == State::Cycle));
 }
@@ -780,10 +1107,55 @@ void protocol_exec_rt_system() {
                     }
                 }
                 // Cycle start only when IDLE or when a hold is complete and ready to resume.
-                if (sys.state == State::Idle || (sys.state == State::Hold && sys.suspend.bit.holdComplete)) {
+                // ГЕЙТ ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ: если прямо сейчас у какого-то клиента в буфере
+                // лежит недопринятая строка (скорее всего хвост команды $MJ=..., ещё не
+                // доехавший по сети/USB), резюм откладывается — cycleStart НЕ сбрасывается
+                // (см. ниже, вне этого if), а suspend-цикл делает ещё один проход, где
+                // manual_adjust_poll_clients() выше успеет её дочитать и выполнить. Так резюм
+                // гарантированно срабатывает только после завершения ВСЕХ уже отправленных $MJ.
+                if ((sys.state == State::Idle || (sys.state == State::Hold && sys.suspend.bit.holdComplete)) &&
+                    !manual_adjust_input_pending() && !manual_adjust_command_active) {
                     if (sys.state == State::Hold && sys.spindle_stop_ovr.value) {
                         sys.spindle_stop_ovr.bit.restoreCycle = true;  // Set to restore in suspend routine and cycle start after.
                     } else {
+                        // ФИНАЛЬНЫЙ ФЛАШ ПЕРЕД РЕЗЮМЕ (найдено по тесту с окружностью из мелких
+                        // сегментов: MPos после resume прыгал между двумя группами точек с разницей
+                        // РОВНО в величину $MJ-сдвига — 61.763↔71.559, 61.194↔69.374, diff~10мм —
+                        // прямой признак чередования СТАРЫХ (до сдвига) и НОВЫХ (после сдвига)
+                        // сегментов в общем FIFO. st_flush_segment_buffer() в setup/restore_buffer()
+                        // защищает от этого только ВНУТРИ самих $MJ-движений; между последним MJ и
+                        // фактическим cycleStart здесь ничего не гарантировало чистоту очереди.
+                        // Таймер степпера гарантированно остановлен (мы в Hold, st_go_idle() уже
+                        // вызывался), поэтому здесь безопасно финально сбросить очередь и ISR-сегмент
+                        // непосредственно перед тем, как ниже будут вызваны st_prep_buffer()/st_wake_up().
+                        st_flush_segment_buffer();
+                        manual_adjust_report_hidden_delta("before_resume");
+                        st_debug_dump_prep("resume prep_state");
+                        // ДИАГНОСТИКА RESUME: раньше в этой точке не логировалось вообще ничего,
+                        // из-за чего в USB-логе не было следов между последним "$MJ done" и
+                        // следующими событиями файла. Печатаем полное состояние ПРЯМО перед
+                        // стартом цикла — блок в очереди, его оставшуюся дистанцию (mm), реальную
+                        // машинную позицию (sys_position/mpos) и позицию парсера (gc_state.position),
+                        // чтобы поймать источник видимого смещения на самом резюме.
+                        {
+                            plan_block_t* resume_block = plan_get_current_block();
+                            float*        resume_mpos  = system_get_mpos();
+                            manual_adjust_logf(
+                                "[MSG:resume block=%s rem=%.3fmm sys_steps=(%ld,%ld,%ld) mpos=%.3f,%.3f,%.3f parser_pos=%.3f,%.3f,%.3f "
+                                "motionCancel=%d]",
+                                resume_block ? "yes" : "no",
+                                resume_block ? resume_block->millimeters : 0.0f,
+                                (long)sys_position[0],
+                                (long)sys_position[1],
+                                (long)sys_position[2],
+                                resume_mpos[0],
+                                resume_mpos[1],
+                                resume_mpos[2],
+                                gc_state.position[0],
+                                gc_state.position[1],
+                                gc_state.position[2],
+                                (int)sys.suspend.bit.motionCancel);
+                        }
                         // Start cycle only if queued motions exist in planner buffer and the motion is not canceled.
                         sys.step_control = {};  // Restore step control to normal operation
                         if (plan_get_current_block() && !sys.suspend.bit.motionCancel) {
@@ -798,7 +1170,13 @@ void protocol_exec_rt_system() {
                     }
                 }
             }
-            sys_rt_exec_state.bit.cycleStart = false;
+            // Если резюм отложен из-за незавершённого $MJ-ввода ИЛИ потому, что текущий
+            // $MJ ещё физически выполняется (manual_adjust_command_active), НЕ сбрасываем
+            // cycleStart — оставляем его выставленным, чтобы попытка повторилась на
+            // следующем проходе suspend-цикла, когда и ввод, и само движение будут завершены.
+            if (!manual_adjust_input_pending() && !manual_adjust_command_active) {
+                sys_rt_exec_state.bit.cycleStart = false;
+            }
         }
         if (cycle_stop) {
             // Reinitializes the cycle plan and stepper system after a feed hold for a resume. Called by
@@ -845,12 +1223,24 @@ void protocol_exec_rt_system() {
                     // "довызвать" его уже никто не сможет. plan_get_current_block() после этого
                     // навсегда возвращает тот же "недоеденный" блок, и protocol_buffer_synchronize()
                     // (напр. из spindle->sync() на следующей команде M3/M4) виснет бесконечно в своём
-                    // do-while, ожидая его завершения. Раз ISR УЖЕ решил, что степать больше нечего
-                    // (иначе он не поставил бы cycle_stop) — довыполнять этот блок объективно нечего,
-                    // и его безопасно снять с очереди явно, чтобы синхронизация не зависала навсегда.
-                    if (plan_get_current_block()) {
-                        grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "[MSG:cycle_stop stale block discarded]");
-                        plan_discard_current_block();
+                    // do-while, ожидая его завершения. ВАЖНО (см. discard_stale_planner_block()):
+                    // "ISR решил, что степать больше нечего" означает только что буфер СЕГМЕНТОВ
+                    // пуст — а не что весь блок физически пройден, если st_prep_buffer() не успел
+                    // сгенерировать для него сегменты до конца. Поэтому снимаем с очереди только
+                    // тихо, если реальной непройденной дистанции не осталось; иначе поднимаем тревогу.
+                    // ПЕРЕД тревогой сначала пробуем бесшовно резюмировать тот же блок (см.
+                    // try_resume_stale_block()) — большинство таких гонок транзиентны (главный
+                    // подозреваемый триггер — кратковременная нагрузка WebUI/WiFi на main-loop),
+                    // и повторная подготовка сегментов для того же module-static block state
+                    // обычно позволяет продолжить движение без какой-либо видимой остановки.
+                    // Motion-cancel is used by probing to intentionally stop the current block on contact.
+                    // Do not auto-resume that block here, otherwise a valid probe hit can continue moving.
+                    if (plan_get_current_block() && !sys.suspend.bit.motionCancel &&
+                        gc_state.modal.motion != Motion::ProbeToward && gc_state.modal.motion != Motion::ProbeTowardNoError &&
+                        gc_state.modal.motion != Motion::ProbeAway && gc_state.modal.motion != Motion::ProbeAwayNoError) {
+                        if (!try_resume_stale_block("cycle_stop")) {
+                            discard_stale_planner_block("cycle_stop");
+                        }
                     }
                 }
             }
@@ -918,14 +1308,36 @@ void protocol_exec_rt_system() {
     }
 #endif
     // Reload step segment buffer
+    // ФИНАЛЬНЫЙ УРОВЕНЬ ТОЙ ЖЕ ПРОБЛЕМЫ (найдено по логам: та же диагональная убывающая
+    // последовательность (64,64,64)→...→(0,-8,0) повторяется даже после flush в
+    // st_parking_setup_buffer()/сброса exec_segment): пока пользователь просто ждёт между
+    // командами $MJ (ничего не нажимая), ЭТОТ switch продолжает вызывать st_prep_buffer()
+    // на каждой итерации цикла паузы (State::Hold). Раз pl_block==NULL и holdPartialBlock=1
+    // (обычная ситуация — пауза застала станок посреди блока), st_prep_buffer() КАЖДЫЙ РАЗ
+    // молча регенерирует НОВЫЕ сегменты прерванного блока (используя restored prep.steps_
+    // remaining/dt_remainder/step_per_mm) в segment_buffer — хотя таймер ISR не запущен и
+    // никто их не читает. Они просто копятся. Мой flush в setup_buffer() чистит буфер ТОЛЬКО
+    // в момент старта СЛЕДУЮЩЕГО $MJ, но между этим моментом и предыдущим MJ (пока
+    // пользователь ждёт) буфер снова успевает наполниться этими "фоновыми" сегментами того
+    // же старого блока — отсюда идентичная убывающая последовательность при каждом тесте
+    // (она детерминирована характеристиками одного и того же прерванного блока).
+    // Правильная точка вызова: только когда ЛИБО обычный цикл активно крутится (не Hold),
+    // ЛИБО именно ВНУТРИ системного ($MJ) движения (executeSysMotion=true — это нужно,
+    // подтверждено: без этого длинные X10/X-10 обрывались на середине). Все ОСТАЛЬНОЕ время
+    // Hold (простое ожидание следующей команды на паузе) НЕ должно трогать segment_buffer —
+    // дозаправка недокрученного блока произойдёт штатно уже на самом Resume.
     switch (sys.state) {
         case State::Cycle:
-        case State::Hold:
         case State::SafetyDoor:
         case State::Homing:
         case State::Sleep:
         case State::Jog:
             st_prep_buffer();
+            break;
+        case State::Hold:
+            if (sys.step_control.executeSysMotion || sys.step_control.executeHold) {
+                st_prep_buffer();
+            }
             break;
         default:
             break;
@@ -1166,5 +1578,6 @@ static void protocol_exec_rt_suspend() {
     }
     // Пауза завершилась (любым способом) — следующая пауза должна начать захват
     // позиции для правки с чистого листа.
+    manual_adjust_report_hidden_delta("suspend_exit");
     manual_adjust_end_session();
 }

@@ -301,6 +301,11 @@ static void stepper_pulse_func() {
     // Check probing state.
     if (sys_probe_state == Probe::Active) {
         probe_state_monitor();
+        if (sys_probe_state == Probe::Off) {
+            st_go_idle();
+            cycle_stop = true;
+            return;
+        }
     }
     
     // Reset step out bits.
@@ -479,6 +484,57 @@ void st_parking_setup_buffer() {
         prep.last_dt_remainder    = prep.dt_remainder;
         prep.last_step_per_mm     = prep.step_per_mm;
     }
+    // НАСТОЯЩАЯ ПРИЧИНА "плавающее движение по непрошенным осям, размер уменьшается с
+    // каждым $MJ" (подтверждено логами: d=(64,64,64)→(64,-64,64)→...→(53,-64,53)→(0,61,0),
+    // то есть один и тот же старый блок постепенно доисполняется по кусочкам): segment_buffer
+    // — это FIFO-очередь, которую ISR потребляет строго по порядку НЕЗАВИСИМО от источника
+    // сегментов. Пока станок стоит на паузе, ISR остановлен (st_go_idle() в момент
+    // holdComplete), но сегменты прерванного блока, УЖЕ подготовленные ДО остановки, остаются
+    // сидеть в очереди неисполненными. st_wake_up() перед каждым $MJ-движением просто
+    // перезапускает таймер ISR — и он первым делом доедает именно ЭТИ старые сегменты
+    // (сидящие в очереди раньше новых $MJ-сегментов), физически двигая станок по осям
+    // прерванного блока, а не по осям текущего $MJ. do-while в mc_parking_motion() ждёт
+    // завершения именно СВОЕГО системного блока, поэтому каждый вызов "срезает" ещё один
+    // кусок старой очереди, пока она не иссякнет — отсюда постепенно уменьшающийся размер.
+    // Фикс: перед каждым системным (парковочным) движением явно выбрасываем из очереди все
+    // ещё неисполненные "старые" сегменты — они принадлежат прерванному блоку, который сам
+    // корректно восстанавливается через prep.last_*/holdPartialBlock выше и НЕ зависит от
+    // физически исполненных ISR-ом сегментов (его учёт идёт на уровне steps_remaining, а не
+    // сегментов). ISR сейчас не выполняется (таймер остановлен), поэтому трогать
+    // segment_buffer_tail напрямую безопасно.
+    // ДОПОЛНЕНИЕ к фиксу выше (найдено по новым логам: паразитное движение растёт РОВНО
+    // диагонально (64,64,64)→(64,-64,64)→... на КАЖДОМ $MJ, независимо от запрошенной оси —
+    // явный признак, что докручивается один и тот же старый сегмент кусками): очистка ТОЛЬКО
+    // очереди (segment_buffer_tail/head) недостаточна. Если feed hold остановил ISR ПОСЕРЕДИНЕ
+    // сегмента (st.step_count > 0 в момент Stepper_Timer_Stop()), st.exec_segment НЕ равен
+    // NULL — ISR очищает exec_segment только когда step_count САМ доходит до 0 (см. ISR ниже:
+    // "if (st.step_count == 0) { st.exec_segment = NULL; ...}"). Значит в ISR остаётся
+    // "подвешенный" указатель на СТАРЫЙ сегмент с ненулевым остатком шагов и старыми
+    // steps[]/direction_bits. st_wake_up() перед каждым $MJ просто перезапускает таймер, и
+    // ISR ПРОДОЛЖАЕТ докручивать именно этот старый "подвешенный" сегмент (а не новый,
+    // подготовленный для $MJ), пока его step_count не иссякнет — по кусочку на каждый вызов.
+    // Таймер сейчас остановлен (Stepper_Timer_Stop() был вызван при уходе в holdComplete),
+    // поэтому безопасно напрямую обнулить exec_segment/step_count здесь, форсируя ISR брать
+    // сегмент заново из (уже очищенной выше) очереди при следующем пробуждении.
+    st.exec_segment = NULL;
+    st.step_count   = 0;
+    segment_buffer_tail = segment_buffer_head;
+    // ЕЩЁ ОДИН СЛОЙ (найдено по факту, что диагональный паттерн d=(64,64,64)→...→(0,-8,0)
+    // ИДЕНТИЧНО повторяется в разных прогонах — это признак не "случайной" утечки данных,
+    // а строго детерминированной логической ошибки): ISR реинициализирует Bresenham-счётчики
+    // st.counter[axis] ТОЛЬКО когда st.exec_block_index != st.exec_segment->st_block_index
+    // (новый блок). segment_buffer_head/st_block_index — это маленькое кольцо
+    // (SEGMENT_BUFFER_SIZE-1 ~39 слотов), и при частых одинаковых операциях (много $MJ
+    // подряд после одинаковой серии предыдущих движений) индекс нового блока для $MJ может
+    // СЛУЧАЙНО совпасть со "старым" st.exec_block_index, оставшимся в ISR от прошлого блока
+    // (или от предыдущего $MJ). В этом случае реинициализации счётчиков НЕ происходит:
+    // st.counter[axis] остаются от ПРЕДЫДУЩЕГО блока, и Bresenham-распределение шагов по осям
+    // для НОВОГО блока считается неверно — типичный симптом именно "движение размазывается
+    // по всем трём осям вместо одной запрошенной". Форсируем гарантированное несовпадение,
+    // выставляя exec_block_index в заведомо невозможное значение (вне диапазона реальных
+    // индексов блока) — тогда ISR ВСЕГДА корректно переинициализирует счётчики при загрузке
+    // следующего (нового, после сброса выше) сегмента.
+    st.exec_block_index = 0xFF;
     // Set flags to execute a parking motion
     prep.recalculate_flag.parking     = 1;
     prep.recalculate_flag.recalculate = 0;
@@ -500,15 +556,101 @@ void st_parking_restore_buffer() {
     } else {
         prep.recalculate_flag = {};
     }
+    // БАГ (найден по логам $MJ: park=1 залипает навечно во всех prep_after_move и даже
+    // в момент реального resume): ветка holdPartialBlock выше НЕ сбрасывает parking, а
+    // st_parking_setup_buffer() перед каждым $MJ-перемещением ставит его в 1. Раз пауза
+    // прервала блок посередине (holdPartialBlock=1) — что типичный случай для файла,
+    // остановленного посреди движения — этот флаг остаётся 1 через ВСЕ последующие $MJ
+    // и переживает до самого resume. Явно обнуляем его здесь: сама parking-операция уже
+    // полностью завершена к этому моменту (мы находимся в конце restore_buffer()).
+    prep.recalculate_flag.parking = 0;
+
+    // ЕЩЁ ОДИН СЛОЙ (найден по отчёту: баг воспроизводится даже БЕЗ множества $MJ в одной
+    // паузе — достаточно одного $MJ в первой паузе, resume, снова пауза, один $MJ во второй
+    // паузе, resume — и лишнее движение всё равно появляется после второго resume). К этому
+    // моменту $MJ-перемещение (mc_parking_motion) уже физически ПОЛНОСТЬЮ завершилось (иначе
+    // мы бы не дошли сюда — do-while в mc_parking_motion() ждёт именно этого), поэтому ISR
+    // гарантированно бездействует. Но exec_segment/exec_block_index в ISR всё ещё указывают
+    // на данные ТОЛЬКО ЧТО исполненного $MJ-блока. Если возобновляемый после этого блок файла
+    // (продолжение прерванного паузой блока) случайно получит тот же индекс слота в кольце —
+    // ISR НЕ переинициализирует Bresenham-счётчики (см. комментарий в setup_buffer выше про
+    // exec_block_index) и распределение шагов по осям посчитается неверно. Форсируем то же
+    // самое гарантированное несовпадение здесь, симметрично setup_buffer.
+    st.exec_segment      = NULL;
+    st.step_count        = 0;
+    st.exec_block_index  = 0xFF;
 
     pl_block = NULL;  // Set to reload next block.
+}
+
+void st_debug_dump_prep(const char* tag) {
+    plan_block_t* cur = plan_get_current_block();
+    grbl_msg_sendf(CLIENT_ALL,
+                   MsgLevel::Info,
+                   "[MSG:%s prep flags(recalc=%d hold=%d park=%d decel=%d) steps_rem=%.3f dt_rem=%.6f step_per_mm=%.3f "
+                   "pl_block=%s cur_block_mm=%.3f]",
+                   tag,
+                   (int)prep.recalculate_flag.recalculate,
+                   (int)prep.recalculate_flag.holdPartialBlock,
+                   (int)prep.recalculate_flag.parking,
+                   (int)prep.recalculate_flag.decelOverride,
+                   prep.steps_remaining,
+                   prep.dt_remainder,
+                   prep.step_per_mm,
+                   pl_block ? "set" : "null",
+                   cur ? cur->millimeters : -1.0f);
+    char line[220];
+    snprintf(line,
+             sizeof(line),
+             "[MSG:%s prep flags(recalc=%d hold=%d park=%d decel=%d) steps_rem=%.3f dt_rem=%.6f step_per_mm=%.3f "
+             "pl_block=%s cur_block_mm=%.3f]",
+             tag,
+             (int)prep.recalculate_flag.recalculate,
+             (int)prep.recalculate_flag.holdPartialBlock,
+             (int)prep.recalculate_flag.parking,
+             (int)prep.recalculate_flag.decelOverride,
+             prep.steps_remaining,
+             prep.dt_remainder,
+             prep.step_per_mm,
+             pl_block ? "set" : "null",
+             cur ? cur->millimeters : -1.0f);
+    grbl_sendf(CLIENT_SERIAL, "%s\r\n", line);
+}
+
+void st_flush_segment_buffer() {
+    segment_buffer_tail = segment_buffer_head;
+    st.exec_segment     = NULL;
+    st.step_count        = 0;
+    st.exec_block_index  = 0xFF;
 }
 #endif
 
 // Increments the step segment buffer block data ring buffer.
+// НАСТОЯЩАЯ ПРИЧИНА "лишнее движение по непрошенным осям после нескольких $MJ" (нашлось по
+// логам: dY=-0.010 запрошено, физически исполнилось d=(64,-64,64)): st_block_buffer — это
+// ОБЩИЙ кольцевой буфер Bresenham-данных (steps[]/direction_bits) размером
+// SEGMENT_BUFFER_SIZE-1 (~39 слотов), используемый И для дозаправки блока, прерванного
+// паузой (holdPartialBlock continuation — слот запомнен в prep.last_st_block_index), И для
+// КАЖДОГО системного движения $MJ (каждый $MJ вызывает st_next_block_index() и занимает
+// новый слот). При множестве $MJ за одну паузу кольцо оборачивается и рано или поздно СНОВА
+// попадает на prep.last_st_block_index, ПЕРЕЗАПИСЫВАЯ данные прерванного блока раньше, чем
+// он был физически исполнен. При Resume оставшиеся сегменты того блока читают уже ЧУЖИЕ,
+// перезаписанные steps[]/direction_bits — отсюда движение по осям, которые не запрашивались,
+// разного размера (зависит от того, какой именно $MJ последним занял этот слот).
+// Фикс: пока прерванный блок ждёт возобновления (holdPartialBlock=1), никогда не выделяем
+// его защищённый слот для новых блоков — пропускаем его при выдаче следующего индекса.
 static uint8_t st_next_block_index(uint8_t block_index) {
     block_index++;
-    return block_index == (SEGMENT_BUFFER_SIZE - 1) ? 0 : block_index;
+    if (block_index == (SEGMENT_BUFFER_SIZE - 1)) {
+        block_index = 0;
+    }
+    if (prep.recalculate_flag.holdPartialBlock && block_index == prep.last_st_block_index) {
+        block_index++;
+        if (block_index == (SEGMENT_BUFFER_SIZE - 1)) {
+            block_index = 0;
+        }
+    }
+    return block_index;
 }
 
 /* Prepares step segment buffer. Continuously called from main program.

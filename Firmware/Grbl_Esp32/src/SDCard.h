@@ -44,6 +44,7 @@ extern uint32_t                   sd_current_line_number;
 SDState  get_sd_state(bool refresh);
 SDState  set_sd_state(SDState state);
 void     listDir(fs::FS& fs, const char* dirname, uint8_t levels, uint8_t client);
+void     listDirAll(fs::FS& fs, const char* dirname, uint8_t levels, uint8_t client);
 boolean  openFile(fs::FS& fs, const char* path);
 boolean  closeFile();
 boolean  readFileLine(char* line, int len);

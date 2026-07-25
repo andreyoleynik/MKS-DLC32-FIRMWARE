@@ -115,6 +115,17 @@ void st_parking_setup_buffer();
 // Restores the step segment buffer to the normal run state after a parking motion.
 void st_parking_restore_buffer();
 
+// Диагностика для отладки "смещения после $MJ": выводит текущие module-static
+// prep/pl_block поля степпера, которые разделяются системными (parking/MJ)
+// и файловыми движениями.
+void st_debug_dump_prep(const char* tag);
+
+// Форсирует чистый старт сегментного FIFO-буфера и текущего ISR-сегмента.
+// Безопасно вызывать только когда таймер степпера остановлен и ISR гарантированно
+// не выполняется (например, во время Hold или прямо перед вызовом st_wake_up()).
+void st_flush_segment_buffer();
+
+
 // Reloads step segment buffer. Called continuously by realtime execution system.
 void st_prep_buffer();
 

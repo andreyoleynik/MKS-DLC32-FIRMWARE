@@ -34,6 +34,7 @@ namespace WebUI {
     uint16_t      Telnet_Server::_port         = 0;
     WiFiServer*   Telnet_Server::_telnetserver = NULL;
 
+    #include <WiFi.h>
     #ifdef ENABLE_TELNET_OTHER_TASK
         TaskHandle_t _telnet_task;
     #endif
@@ -107,6 +108,14 @@ namespace WebUI {
     {
         bool client_found = false;
 
+        for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
+        {
+            if (telnet_server[i].is_stale())
+            {
+                telnet_server[i].reset_client();
+            }
+        }
+
         if (_telnetserver != NULL)
         {
             // WiFiServer::available() is safer on ESP32 Arduino 2.x: it checks
@@ -123,7 +132,7 @@ namespace WebUI {
                     telnet_server[i].setup_client(client);
 
                     String s = "[MSG:TELNET Connected i:" + String(i) + "]\r\n";
-                    grbl_send(CLIENT_ALL, (char*)s.c_str());
+                    grbl_send(CLIENT_SERIAL, (char*)s.c_str());
                     client_found = true;
                     break;
                 }
@@ -131,27 +140,8 @@ namespace WebUI {
 
             if(!client_found)
             {
-                // Все слоты «is_connected()==true», но это могут быть зомби-соединения
-                // (старый клиент отвалился без корректного FIN, TCP-стек не знает об этом).
-                // Заменяем самый старый по активности слот, если он превысил STALE_TIMEOUT_MS без трафика.
-                for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
-                {
-                    if (telnet_server[i].is_stale())
-                    {
-                        telnet_server[i].setup_client(client);
-
-                        String s = "[MSG:TELNET Reconnected (stale slot i:" + String(i) + " replaced)]\r\n";
-                        grbl_send(CLIENT_ALL, (char*)s.c_str());
-                        client_found = true;
-                        break;
-                    }
-                }
-            }
-
-            if(!client_found)
-            {
                 client.stop();
-                grbl_send(CLIENT_ALL, "[MSG:TELNET Client rejected]\r\n");
+                grbl_send(CLIENT_SERIAL, "[MSG:TELNET Client rejected]\r\n");
             }
             }
         }
@@ -256,15 +246,23 @@ namespace WebUI {
         return (millis() - _last_activity_ms) > STALE_TIMEOUT_MS;
     }
 
-    void Telnet_Server::setup_client(WiFiClient& client)
+    void Telnet_Server::reset_client()
     {
 #ifdef ENABLE_TELNET_WELCOME_MSG
         _telnetClientIP = IPAddress(0, 0, 0, 0);
 #endif
-
-        if(_telnetClient.connected())
+        if (_telnetClient) {
             _telnetClient.stop();
+        }
+        _telnetClient = WiFiClient();
+        _RXbufferSize = 0;
+        _RXbufferpos  = 0;
+        _last_activity_ms = 0;
+    }
 
+    void Telnet_Server::setup_client(WiFiClient& client)
+    {
+        reset_client();
         _telnetClient = client;
         touch_activity();
     }
@@ -348,10 +346,7 @@ namespace WebUI {
         {
             if (_telnetClient) 
             {
-#    ifdef ENABLE_TELNET_WELCOME_MSG
-                _telnetClientIP = IPAddress(0, 0, 0, 0);
-#    endif
-                _telnetClient.stop();
+                reset_client();
             }
         }
             

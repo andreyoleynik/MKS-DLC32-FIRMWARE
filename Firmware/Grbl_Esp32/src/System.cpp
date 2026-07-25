@@ -33,6 +33,7 @@ volatile ExecAlarm     sys_rt_exec_alarm;  // Global realtime executor bitflag v
 volatile ExecAccessory sys_rt_exec_accessory_override;  // Global realtime executor bitflag variable for spindle/coolant overrides.
 volatile bool          cycle_stop;                      // For state transitions, instead of bitflag
 volatile void*         sys_pl_data_inflight;  // holds a plan_line_data_t while cartesian_to_motors has taken ownership of a line motion
+float mc_wcs_shift_accum[MAX_N_AXIS] = { 0 };  // Accumulated WCS shift (mm) applied by $MJ during Hold. See System.h.
 #ifdef DEBUG
 volatile bool sys_rt_exec_debug;
 #endif

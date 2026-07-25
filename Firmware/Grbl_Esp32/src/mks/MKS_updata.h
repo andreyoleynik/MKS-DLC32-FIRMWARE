@@ -33,10 +33,14 @@ typedef struct {
     uint32_t updata_cont;               // 用于选择更新第几个
     uint32_t updata_line;               // 用于记录更新到第几行
     uint8_t updata_persen;              // 更新百分比
+    uint32_t updata_total_bytes;        // 固件更新总大小
+    uint32_t updata_written_bytes;      // 固件更新已写入大小
     bool is_have_data_ud;               // 确定读到了数据进行更新
     bool is_have_board_1;               // 读到了主板信息1
     bool is_have_board_2;               // 读到了主板信息2
     bool is_have_board_3;               // 读到了主板信息3
+    bool is_firmware_update;            // 当前更新任务是否为固件更新
+    bool is_webui_update;               // 当前更新任务是否为WebUI (index.html.gz)
 }MKS_UPDATA_T;
 extern MKS_UPDATA_T mks_updata;
 
@@ -53,4 +57,5 @@ void mks_draw_updata(void);
 void mks_updata_data(void);
 void mks_cfg_find(void);
 void mks_cfg_rename(const char* path1);
+void mks_updata_process(void);
 #endif

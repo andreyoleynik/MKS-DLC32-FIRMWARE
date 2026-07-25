@@ -488,7 +488,17 @@ const int DWELL_TIME_STEP = 50;  // Integer (1-255) (milliseconds)
 // block velocity profile is traced exactly. The size of this buffer governs how much step
 // execution lead time there is for other Grbl processes have to compute and do their thing
 // before having to come back and refill this buffer, currently at ~50msec of step moves.
-// #define SEGMENT_BUFFER_SIZE 6 // Uncomment to override default in stepper.h.
+// Увеличено со стандартных 6 (~50-60мс запаса) до 40 (~400мс запаса): main-loop иногда блокируется на
+// сотни миллисекунд (подтверждено логами discard_stale_planner_block()/try_resume_stale_block()
+// в Protocol.cpp, коррелирует с активностью WebUI/WiFi) — со стандартным буфером ~50мс запаса
+// этого недостаточно, поэтому даже успешный "seamless resume" (см. try_resume_stale_block())
+// заполнял буфер лишь на очередные ~50мс и почти сразу пустел снова, из-за чего движение шло
+// крошечными рывками с длинными паузами между ними (визуально станок "стоит на месте", хотя
+// в логе видны последовательные resume с уменьшающимся остатком). Больший буфер не устраняет
+// сами задержки main-loop, но даёт системе намного больше запаса, чтобы их пережидать без
+// видимых остановок движения. Стоимость: sizeof(segment_t)*(40-6) дополнительных байт RAM
+// (структура небольшая — не критично при текущем свободном RAM, см. platformio-notes).
+#define SEGMENT_BUFFER_SIZE 40 // Overrides default (6) in stepper.h — see comment above.
 
 // Line buffer size from the serial input stream to be executed. Also, governs the size of
 // each of the startup blocks, as they are each stored as a string of this size.

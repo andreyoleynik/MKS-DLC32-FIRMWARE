@@ -64,6 +64,12 @@ void grbl_init() {
     // report_machine_type(CLIENT_SERIAL);
 #endif
     settings_init();  // Load Grbl settings from non-volatile storage
+    // По просьбе пользователя: любой сдвиг G54, накопленный командами $MJ (см.
+    // manual_adjust_apply_wcs_shift_from_session() в Protocol.cpp) во время предыдущего
+    // включения станка, НЕ должен переживать физическую перезагрузку/включение питания.
+    // Делаем это здесь, ДО gc_init() (вызывается позже, внутри reset_variables()/run_once()),
+    // чтобы парсер сразу загрузил уже обнулённый G54 из NVS.
+    gc_reset_g54_offset();
     stepper_init();   // Configure stepper pins and interrupt timers
     system_ini();     // Configure pinout pins and pin-change interrupt (Renamed due to conflict with esp32 files)
     init_motors();
@@ -223,16 +229,24 @@ static void reset_variables() {
     if (!boot_diag_printed) {
         boot_diag_printed = true;
         esp_reset_reason_t reason = esp_reset_reason();
-        grbl_msg_sendf(CLIENT_SERIAL,
-                       MsgLevel::Info,
-                       "Reset reason: %s (%d)",
-                       reset_reason_text(reason),
-                       (int)reason);
-        grbl_msg_sendf(CLIENT_SERIAL,
-                       MsgLevel::Info,
-                       "Heap free/min: %u/%u",
-                       (unsigned)ESP.getFreeHeap(),
-                       (unsigned)xPortGetMinimumEverFreeHeapSize());
+        // Гарантированный вывод на USB (см. discard_stale_planner_block() в Protocol.cpp для
+        // подробного объяснения): grbl_msg_sendf() фильтруется настройкой $Message/Level и
+        // может НЕ дойти до USB вообще, если уровень занижен — а причина сброса/краша это
+        // самое важное, что нужно увидеть именно после НЕОЖИДАННОЙ перезагрузки во время
+        // задания (watchdog/panic/brownout), поэтому дублируем raw-вызовом без фильтра.
+        char reason_line[96];
+        snprintf(reason_line, sizeof(reason_line), "Reset reason: %s (%d)", reset_reason_text(reason), (int)reason);
+        grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", reason_line);
+        grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", reason_line);
+
+        char heap_line[64];
+        snprintf(heap_line,
+                 sizeof(heap_line),
+                 "Heap free/min: %u/%u",
+                 (unsigned)ESP.getFreeHeap(),
+                 (unsigned)xPortGetMinimumEverFreeHeapSize());
+        grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", heap_line);
+        grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", heap_line);
     }
 
     // used to keep track of a jog command sent to mc_line() so we can cancel it.

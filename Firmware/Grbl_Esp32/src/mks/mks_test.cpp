@@ -120,13 +120,15 @@ void mks_draw_test_ui(void) {
                                             LV_ALIGN_IN_TOP_LEFT, 
                                             dis_str);
 
+    memset(dis_str, 0, sizeof(dis_str));
+    snprintf(dis_str, sizeof(dis_str), "%s Build:%s", FW_NAME, GRBL_VERSION_BUILD);
     test_page.label_version = label_for_text(mks_global.mks_src, 
                                             test_page.label_version, 
                                             NULL, 
                                             TITLE_X_POS, 
                                             TITLE_Y_POS + TITLE_Y_OFFSET*8, 
                                             LV_ALIGN_IN_TOP_LEFT, 
-                                            FW_NAME);
+                                            dis_str);
 
     test_page.btn_back = mks_lv_btn_set(mks_global.mks_src, 
                                         test_page.btn_back, 

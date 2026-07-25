@@ -56,6 +56,15 @@ void gc_sync_position() {
     system_convert_array_steps_to_mpos(gc_state.position, sys_position);
 }
 
+// Обнуляет G54 и в NVS, и (если она активна) в gc_state.coord_system — см. комментарий в GCode.h.
+void gc_reset_g54_offset() {
+    float zero[MAX_N_AXIS] = { 0 };
+    coords[CoordIndex::G54]->set(zero);
+    if (gc_state.modal.coord_select == CoordIndex::G54) {
+        memcpy(gc_state.coord_system, zero, sizeof(zero));
+    }
+}
+
 // Edit GCode line in-place, removing whitespace and comments and
 // converting to uppercase
 void collapseGCode(char* line) {

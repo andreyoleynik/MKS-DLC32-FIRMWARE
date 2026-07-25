@@ -244,7 +244,7 @@ static void mks_page_data_updata(void) {
 #endif
     else if(mks_ui_page.mks_ui_page == MKS_UI_UPDATA) {
         if(mks_updata.updata_flag == UD_UPDATA_ING) {
-            mks_cfg_find();
+            mks_updata_process();
         }
         else if(mks_updata.updata_flag == UD_UPDATA_FINSH) {
             // 更新完成弹窗

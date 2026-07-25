@@ -115,6 +115,29 @@ void listDir(fs::FS& fs, const char* dirname, uint8_t levels, uint8_t client) {
     }
 }
 
+void listDirAll(fs::FS& fs, const char* dirname, uint8_t levels, uint8_t client) {
+    File root = fs.open(dirname);
+    if (!root) {
+        report_status_message(Error::FsFailedOpenDir, client);
+        return;
+    }
+    if (!root.isDirectory()) {
+        report_status_message(Error::FsDirNotFound, client);
+        return;
+    }
+    File file = root.openNextFile();
+    while (file) {
+        if (file.isDirectory()) {
+            if (levels) {
+                listDirAll(fs, file.path(), levels - 1, client);
+            }
+        } else {
+            grbl_sendf(CLIENT_ALL, "[FILE:%s|SIZE:%d]\r\n", file.name(), file.size());
+        }
+        file = root.openNextFile();
+    }
+}
+
 char mks_filename_check_str[255];
 void mks_listDir(fs::FS& fs, const char* dirname, uint8_t levels) { 
 
