@@ -229,15 +229,11 @@ static void reset_variables() {
     if (!boot_diag_printed) {
         boot_diag_printed = true;
         esp_reset_reason_t reason = esp_reset_reason();
-        // Гарантированный вывод на USB (см. discard_stale_planner_block() в Protocol.cpp для
-        // подробного объяснения): grbl_msg_sendf() фильтруется настройкой $Message/Level и
-        // может НЕ дойти до USB вообще, если уровень занижен — а причина сброса/краша это
-        // самое важное, что нужно увидеть именно после НЕОЖИДАННОЙ перезагрузки во время
-        // задания (watchdog/panic/brownout), поэтому дублируем raw-вызовом без фильтра.
+        // Стартовая диагностика одним [MSG:] сообщением без дополнительного raw-дубля,
+        // чтобы исключить повтор на последовательном порту при загрузке.
         char reason_line[96];
         snprintf(reason_line, sizeof(reason_line), "Reset reason: %s (%d)", reset_reason_text(reason), (int)reason);
         grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", reason_line);
-        grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", reason_line);
 
         char heap_line[64];
         snprintf(heap_line,
@@ -246,7 +242,6 @@ static void reset_variables() {
                  (unsigned)ESP.getFreeHeap(),
                  (unsigned)xPortGetMinimumEverFreeHeapSize());
         grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "%s", heap_line);
-        grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", heap_line);
     }
 
     // used to keep track of a jog command sent to mc_line() so we can cancel it.

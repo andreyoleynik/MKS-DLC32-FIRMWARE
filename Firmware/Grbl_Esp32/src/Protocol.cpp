@@ -130,7 +130,9 @@ static const float MANUAL_ADJUST_DEFAULT_RATE = 300.0;  // мм/мин, если
 static bool    manual_adjust_used_in_hold = false;
 static bool    manual_adjust_session_open = false;
 static bool    manual_adjust_command_active = false;
+static bool    manual_adjust_resume_delay_logged = false;
 static int32_t manual_adjust_session_start_steps[MAX_N_AXIS] = { 0 };  // sys_position at first $MJ= in this hold
+static int32_t manual_adjust_session_delta_steps[MAX_N_AXIS] = { 0 };  // accumulated REAL steps from executed $MJ moves
 
 // MJ-диагностика: обычный канал + гарантированно USB (в обход фильтра $Message/Level).
 static void manual_adjust_logf(const char* format, ...) {
@@ -176,18 +178,19 @@ static void manual_adjust_apply_wcs_shift_from_session() {
     }
     bool any_delta = false;
     for (int i = 0; i < n_axis; i++) {
-        if (sys_position[i] != manual_adjust_session_start_steps[i]) {
+        if (manual_adjust_session_delta_steps[i] != 0) {
             any_delta = true;
             break;
         }
     }
     if (!any_delta) {
+        memset(manual_adjust_session_delta_steps, 0, sizeof(manual_adjust_session_delta_steps));
         return;
     }
     float delta_mm[MAX_N_AXIS] = { 0 };
     for (int i = 0; i < n_axis; i++) {
         float spm   = axis_settings[i]->steps_per_mm->get();
-        delta_mm[i] = ((float)(sys_position[i] - manual_adjust_session_start_steps[i])) / spm;
+        delta_mm[i] = ((float)manual_adjust_session_delta_steps[i]) / spm;
     }
     float wcs[MAX_N_AXIS];
     coords[gc_state.modal.coord_select]->get(wcs);
@@ -207,28 +210,24 @@ static void manual_adjust_apply_wcs_shift_from_session() {
     for (int i = 0; i < n_axis; i++) {
         mc_wcs_shift_accum[i] += delta_mm[i];
     }
-    // КРИТИЧЕСКИЙ ФИКС (подтверждено полным логом с реальными координатами станка):
-    // pl.position (внутренняя позиция ПЛАНИРОВЩИКА, используется ТОЛЬКО для расчёта
-    // ЧИСЛА ШАГОВ следующего блока — см. Planner.cpp plan_buffer_line()) НЕ обновляется
-    // системными ($MJ) движениями — это намеренно (см. "Block system motion from updating
-    // this data" в Planner.cpp), чтобы не портить нормальную работу планировщика во время
-    // парковочных перемещений. НО это значит, что pl.position остаётся на позиции ДО $MJ.
-    // Следующий обычный блок файла считает своё number-of-steps как
-    // target_steps - pl.position(СТАРАЯ) — то есть получает ЛИШНИЕ шаги ровно на величину
-    // физического сдвига $MJ (в тесте: сдвиг +10мм → следующий блок реально проехал на 10мм
-    // больше своей заявленной длины, WPos "уехал" с 150 на 160). Синхронизируем pl.position
-    // (и gc_state.position — они должны совпадать) с РЕАЛЬНОЙ физической позицией СРАЗУ
-    // ПОСЛЕ сдвига coord_system на ту же величину: тогда WPos (= MPos - WCO) остаётся
-    // прежним (сдвиги друг друга компенсируют), а внутренняя бухгалтерия планировщика
-    // (шаги следующего блока) считается уже от актуальной физической позиции — без лишнего
-    // пробега.
-    gc_sync_position();
-    plan_sync_position();
+    // ВАЖНО: синхронизировать parser/planner с текущим MPos можно только когда очередь
+    // планировщика пуста. Если в ней ещё есть недоеханные блоки (часто после паузы в середине
+    // длинного перемещения), принудительный gc_sync/plan_sync перезапишет базу расчёта для
+    // последующих строк, но сами уже-очередные блоки останутся со старыми целями, что даёт
+    // "скачки" после резюма. Поэтому при непустой очереди оставляем parser/planner как есть.
+    if (plan_get_current_block() == NULL) {
+        gc_sync_position();
+        plan_sync_position();
+    } else {
+        manual_adjust_logf("[MSG:MJ skip_sync queue_not_empty] ");
+    }
     manual_adjust_logf("[MSG:MJ apply_wcs_shift d=%.3f,%.3f,%.3f coord=%d]",
                        delta_mm[0],
                        delta_mm[1],
                        delta_mm[2],
                        (int)gc_state.modal.coord_select);
+    mc_trace_arm_after_manual_adjust("resume_after_mj", 80);
+    memset(manual_adjust_session_delta_steps, 0, sizeof(manual_adjust_session_delta_steps));
 }
 
 // Сбрасывает "активную сессию" правки. Вызывается когда пауза завершается
@@ -236,6 +235,7 @@ static void manual_adjust_apply_wcs_shift_from_session() {
 static void manual_adjust_end_session() {
     manual_adjust_apply_wcs_shift_from_session();
     manual_adjust_used_in_hold = false;
+    manual_adjust_resume_delay_logged = false;
 }
 
 // Выполняет одно изолированное перемещение к абсолютной станочной координате,
@@ -315,6 +315,7 @@ static Error manual_adjust_jog(const char* value, uint8_t client) {
     }
     if (!manual_adjust_session_open) {
         memcpy(manual_adjust_session_start_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
+        memset(manual_adjust_session_delta_steps, 0, sizeof(manual_adjust_session_delta_steps));
         manual_adjust_session_open = true;
     }
     manual_adjust_used_in_hold = true;
@@ -359,6 +360,11 @@ static Error manual_adjust_jog(const char* value, uint8_t client) {
     st_debug_dump_prep("MJ prep_after_move");
     int32_t mj_after_steps[MAX_N_AXIS];
     memcpy(mj_after_steps, sys_position, sizeof(int32_t) * MAX_N_AXIS);
+    if (manual_adjust_session_open) {
+        for (int i = 0; i < n_axis; i++) {
+            manual_adjust_session_delta_steps[i] += (mj_after_steps[i] - mj_before_steps[i]);
+        }
+    }
     manual_adjust_logf("[MSG:MJ steps before=(%ld,%ld,%ld) target=(%ld,%ld,%ld) after=(%ld,%ld,%ld) d=(%ld,%ld,%ld)]",
                        (long)mj_before_steps[0],
                        (long)mj_before_steps[1],
@@ -1115,6 +1121,7 @@ void protocol_exec_rt_system() {
                 // гарантированно срабатывает только после завершения ВСЕХ уже отправленных $MJ.
                 if ((sys.state == State::Idle || (sys.state == State::Hold && sys.suspend.bit.holdComplete)) &&
                     !manual_adjust_input_pending() && !manual_adjust_command_active) {
+                    manual_adjust_resume_delay_logged = false;
                     if (sys.state == State::Hold && sys.spindle_stop_ovr.value) {
                         sys.spindle_stop_ovr.bit.restoreCycle = true;  // Set to restore in suspend routine and cycle start after.
                     } else {
@@ -1168,6 +1175,13 @@ void protocol_exec_rt_system() {
                             sys.state         = State::Idle; 
                         }
                     }
+                } else if (!manual_adjust_resume_delay_logged) {
+                    manual_adjust_resume_delay_logged = true;
+                    manual_adjust_logf("[MSG:resume delayed pending=%d active=%d state=%d holdComplete=%d]",
+                                       (int)manual_adjust_input_pending(),
+                                       (int)manual_adjust_command_active,
+                                       (int)sys.state,
+                                       (int)sys.suspend.bit.holdComplete);
                 }
             }
             // Если резюм отложен из-за незавершённого $MJ-ввода ИЛИ потому, что текущий

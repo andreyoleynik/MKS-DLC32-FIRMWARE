@@ -24,6 +24,7 @@
 
 #include "Grbl.h"
 #include "mks/MKS_draw_lvgl.h"
+#include <stdarg.h>
 
 // M_PI is not defined in standard C/C++ but some compilers
 // support it anyway.  The following suppresses Intellisense
@@ -33,6 +34,41 @@
 #endif
 
 SquaringMode ganged_mode = SquaringMode::Dual;
+
+static int      s_mj_trace_budget      = 0;
+static int      s_mj_trace_budget_init = 0;
+static uint32_t s_mj_trace_start_ms    = 0;
+static char     s_mj_trace_tag[24]     = "";
+
+static void mc_trace_usb(const char* format, ...) {
+    char    line_buf[320];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line_buf, sizeof(line_buf), format, args);
+    va_end(args);
+    grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", line_buf);
+}
+
+void mc_trace_arm_after_manual_adjust(const char* tag, int budget) {
+    if (budget <= 0) {
+        s_mj_trace_budget      = 0;
+        s_mj_trace_budget_init = 0;
+        s_mj_trace_tag[0]      = '\0';
+        return;
+    }
+    if (budget > 200) {
+        budget = 200;
+    }
+    s_mj_trace_budget      = budget;
+    s_mj_trace_budget_init = budget;
+    s_mj_trace_start_ms    = millis();
+    if (tag == NULL) {
+        tag = "mj";
+    }
+    strncpy(s_mj_trace_tag, tag, sizeof(s_mj_trace_tag) - 1);
+    s_mj_trace_tag[sizeof(s_mj_trace_tag) - 1] = '\0';
+    mc_trace_usb("MJTRACE arm tag=%s budget=%d state=%d holdComplete=%d", s_mj_trace_tag, s_mj_trace_budget, (int)sys.state, (int)sys.suspend.bit.holdComplete);
+}
 
 // Execute linear motion in absolute millimeter coordinates. Feed rate given in millimeters/second
 // unless invert_feed_rate is true. Then the feed_rate means that the motion should be completed in
@@ -44,6 +80,8 @@ SquaringMode ganged_mode = SquaringMode::Dual;
 // returns true if line was submitted to planner, or false if intentionally dropped.
 bool mc_line(float* target, plan_line_data_t* pl_data) {
     bool submitted_result = false;
+    float original_target[MAX_N_AXIS];
+    memcpy(original_target, target, sizeof(original_target));
     // store the plan data so it can be cancelled by the protocol system if needed
     sys_pl_data_inflight = pl_data;
     // If enabled, check for soft limit violations. Placed here all line motions are picked up
@@ -107,6 +145,45 @@ bool mc_line(float* target, plan_line_data_t* pl_data) {
         }
         for (int i = 0; i < n_axis; i++) {
             target[i] += (mc_wcs_shift_accum[i] - mc_line_shift_baseline[i]);
+        }
+
+        if (s_mj_trace_budget > 0 && pl_data && !pl_data->motion.systemMotion) {
+            float applied_shift[MAX_N_AXIS] = { 0 };
+            for (int i = 0; i < n_axis; i++) {
+                applied_shift[i] = mc_wcs_shift_accum[i] - mc_line_shift_baseline[i];
+            }
+            float*       mpos       = system_get_mpos();
+            plan_block_t* head_block = plan_get_current_block();
+            int seq = s_mj_trace_budget_init - s_mj_trace_budget + 1;
+            mc_trace_usb(
+                "MJTRACE %s #%d/%d state=%d hold=%d mcancel=%d head=%s rem=%.3f in=%.3f,%.3f,%.3f shift=%.3f,%.3f,%.3f out=%.3f,%.3f,%.3f mpos=%.3f,%.3f,%.3f parser=%.3f,%.3f,%.3f",
+                s_mj_trace_tag,
+                seq,
+                s_mj_trace_budget_init,
+                (int)sys.state,
+                (int)sys.suspend.bit.holdComplete,
+                (int)sys.suspend.bit.motionCancel,
+                head_block ? "yes" : "no",
+                head_block ? head_block->millimeters : 0.0f,
+                original_target[0],
+                original_target[1],
+                original_target[2],
+                applied_shift[0],
+                applied_shift[1],
+                applied_shift[2],
+                target[0],
+                target[1],
+                target[2],
+                mpos[0],
+                mpos[1],
+                mpos[2],
+                gc_state.position[0],
+                gc_state.position[1],
+                gc_state.position[2]);
+            s_mj_trace_budget--;
+            if (s_mj_trace_budget == 0) {
+                mc_trace_usb("MJTRACE done tag=%s elapsed=%lums", s_mj_trace_tag, (unsigned long)(millis() - s_mj_trace_start_ms));
+            }
         }
     }
     // Plan and queue motion into planner buffer

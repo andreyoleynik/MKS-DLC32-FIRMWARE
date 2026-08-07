@@ -92,6 +92,13 @@ void grbl_msg_sendf(uint8_t client, MsgLevel level, const char* format, ...) {
         return;
     }
 
+    // Debug/diagnostic [MSG:] output is intentionally kept on USB serial only.
+    // This avoids polluting Telnet/WebUI streams with verbose logs while preserving
+    // the messages for local troubleshooting.
+    if (client == CLIENT_ALL) {
+        client = CLIENT_SERIAL;
+    }
+
     if (message_level != NULL) {  // might be null before messages are setup
         if (level > static_cast<MsgLevel>(message_level->get())) {
             return;

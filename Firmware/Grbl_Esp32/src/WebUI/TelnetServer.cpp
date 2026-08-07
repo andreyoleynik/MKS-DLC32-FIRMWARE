@@ -28,13 +28,26 @@
 #    include "TelnetServer.h"
 #    include "WifiConfig.h"
 #    include <WiFi.h>
+#    include <freertos/semphr.h>
 
 namespace WebUI {
     Telnet_Server telnet_server[TELNET_CLIENTS_TOTAL];
     uint16_t      Telnet_Server::_port         = 0;
     WiFiServer*   Telnet_Server::_telnetserver = NULL;
+    static SemaphoreHandle_t telnetMutex       = NULL;
 
-    #include <WiFi.h>
+    static inline void telnet_lock() {
+        if (telnetMutex != NULL) {
+            xSemaphoreTake(telnetMutex, portMAX_DELAY);
+        }
+    }
+
+    static inline void telnet_unlock() {
+        if (telnetMutex != NULL) {
+            xSemaphoreGive(telnetMutex);
+        }
+    }
+
     #ifdef ENABLE_TELNET_OTHER_TASK
         TaskHandle_t _telnet_task;
     #endif
@@ -44,6 +57,10 @@ namespace WebUI {
 
     void Telnet_Server::begin_all()
     {
+        if (telnetMutex == NULL) {
+            telnetMutex = xSemaphoreCreateMutex();
+        }
+
         // Слоты клиентов нужны и при выключенном входящем telnet:
         // через них работает исходящее подключение к удалённому серверу (Remote_Client)
         for(auto i = 0; i < TELNET_CLIENTS_TOTAL; i++)
@@ -248,6 +265,13 @@ namespace WebUI {
 
     void Telnet_Server::reset_client()
     {
+        telnet_lock();
+        reset_client_locked();
+        telnet_unlock();
+    }
+
+    void Telnet_Server::reset_client_locked()
+    {
 #ifdef ENABLE_TELNET_WELCOME_MSG
         _telnetClientIP = IPAddress(0, 0, 0, 0);
 #endif
@@ -262,9 +286,11 @@ namespace WebUI {
 
     void Telnet_Server::setup_client(WiFiClient& client)
     {
-        reset_client();
+        telnet_lock();
+        reset_client_locked();
         _telnetClient = client;
         touch_activity();
+        telnet_unlock();
     }
 
     bool Telnet_Server::begin() {
@@ -290,12 +316,16 @@ namespace WebUI {
         
         //log_d("[TELNET out]");
         //push UART data to all connected telnet clients
+        telnet_lock();
         if (is_connected())
         {
             //log_d("[TELNET out connected]");
             wsize = _telnetClient.write(buffer, size);
             if (wsize > 0)
                 touch_activity();
+        }
+        telnet_unlock();
+        if (wsize > 0) {
             COMMANDS::wait(0);
         }
 
@@ -313,19 +343,31 @@ namespace WebUI {
         //check clients for data
         //uint8_t c;
 
+        bool    need_welcome = false;
+#ifdef ENABLE_TELNET_WELCOME_MSG
+        IPAddress remote_ip;
+#endif
+        telnet_lock();
         if (is_connected()) 
         {
 #    ifdef ENABLE_TELNET_WELCOME_MSG
             if (_telnetClientIP != _telnetClient.remoteIP()) 
             {
-                report_init_message(CLIENT_TELNET_VAL(_client_index));
-                _telnetClientIP = _telnetClient.remoteIP();
+                remote_ip = _telnetClient.remoteIP();
+                _telnetClientIP = remote_ip;
+                need_welcome = true;
             }
 #    endif
+            telnet_unlock();
+#    ifdef ENABLE_TELNET_WELCOME_MSG
+            if (need_welcome) {
+                report_init_message(CLIENT_TELNET_VAL(_client_index));
+            }
+#    endif
+            telnet_lock();
             if (_telnetClient.available()) 
             {
                 uint8_t buf[1024];
-                COMMANDS::wait(0);
                 int readlen  = _telnetClient.available();
                 int writelen = TELNETRXBUFFERSIZE - available();
                 if (readlen > 1024) {
@@ -339,6 +381,7 @@ namespace WebUI {
                     push(buf, readlen);
                     touch_activity();
                 }
+                telnet_unlock();
                 return;
             }
         } 
@@ -346,9 +389,13 @@ namespace WebUI {
         {
             if (_telnetClient) 
             {
+                telnet_unlock();
                 reset_client();
+                COMMANDS::wait(0);
+                return;
             }
         }
+        telnet_unlock();
             
         COMMANDS::wait(0);
     }

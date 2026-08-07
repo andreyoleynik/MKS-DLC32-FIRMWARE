@@ -101,6 +101,9 @@ namespace WebUI {
         static int get_rx_buffer_available(uint8_t client);
 
         static void _handle_clients();
+
+    private:
+        void reset_client_locked();
     };
     
     extern Telnet_Server telnet_server[TELNET_CLIENTS_TOTAL];
