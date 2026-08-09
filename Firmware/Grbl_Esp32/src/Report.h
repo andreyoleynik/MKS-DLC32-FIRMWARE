@@ -132,6 +132,7 @@ void report_execute_startup_message(const char* line, Error status_code, uint8_t
 void report_build_info(const char* line, uint8_t client);
 
 void report_gcode_comment(char* comment);
+void report_operator_message(const char* message, uint8_t client);
 
 #ifdef DEBUG
 void report_realtime_debug();

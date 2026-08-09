@@ -40,6 +40,7 @@ namespace Spindles {
         SpindleState     get_state() override;
         void             stop() override;
         void             config_message() override;
+        bool             inLaserMode() override;
         uint32_t        calc_pwm_value(uint32_t input);
         virtual ~PWM() {}
 

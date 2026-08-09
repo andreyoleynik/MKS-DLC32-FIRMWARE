@@ -11,6 +11,17 @@ MKS_PRINT_SETTING_T print_setting;
 
 uint32_t ddxd;
 
+static portMUX_TYPE print_status_message_mux = portMUX_INITIALIZER_UNLOCKED;
+static char print_status_message[96];
+static char last_rendered_status_message[96];
+
+static const lv_coord_t PRINT_COORD_TOP_Y = 129;
+static const lv_coord_t PRINT_COORD_ROW_STEP_Y = 30;
+static const lv_coord_t PRINT_STATUS_MSG_Y = 224;
+static const lv_coord_t PRINT_STATUS_ICON_X = 13;
+static const lv_coord_t PRINT_STATUS_TEXT_X = 56;
+static const lv_coord_t PRINT_STATUS_TEXT_W = 404;
+
 /* btn */
 static lv_obj_t* btn_popup_cancle;
 static lv_obj_t* btn_popup_sure;
@@ -19,6 +30,32 @@ static lv_obj_t* btn_finsh_popup_sure;
 lv_obj_t* Label_print_file_name;
 
 static void resolve_print_filename(char* dst, size_t dst_size);
+
+static void copy_print_status_message(char* dst, size_t dst_size) {
+    if (dst == NULL || dst_size == 0) {
+        return;
+    }
+
+    portENTER_CRITICAL(&print_status_message_mux);
+    strncpy(dst, print_status_message, dst_size - 1);
+    dst[dst_size - 1] = '\0';
+    portEXIT_CRITICAL(&print_status_message_mux);
+}
+
+void mks_set_print_status_message(const char* message) {
+    portENTER_CRITICAL(&print_status_message_mux);
+    if (message == NULL) {
+        print_status_message[0] = '\0';
+    } else {
+        strncpy(print_status_message, message, sizeof(print_status_message) - 1);
+        print_status_message[sizeof(print_status_message) - 1] = '\0';
+    }
+    portEXIT_CRITICAL(&print_status_message_mux);
+}
+
+void mks_clear_print_status_message(void) {
+    mks_set_print_status_message("");
+}
 
 LV_IMG_DECLARE(M_Pause);  // Пауза
 LV_IMG_DECLARE(M_start);  // Старт
@@ -43,6 +80,22 @@ LV_IMG_DECLARE(png_stop_pre);           // Стоп
 LV_IMG_DECLARE(png_cave_pwr_pre);       // Мощность
 LV_IMG_DECLARE(png_cave_speed_pre);     // Скорость
 LV_IMG_DECLARE(png_times);              // Количество гравировок
+LV_IMG_DECLARE(png_comment);
+
+static bool is_status_message_empty(const char* message) {
+    if (message == NULL) {
+        return true;
+    }
+
+    while (*message != '\0') {
+        if (!isspace((unsigned char)*message)) {
+            return false;
+        }
+        message++;
+    }
+
+    return true;
+}
 
 static void sync_print_state_ui(void) {
     if (print_src.print_imgbtn_suspend == NULL || print_src.print_Label_p_suspend == NULL) {
@@ -111,6 +164,8 @@ static void event_handler_none(lv_obj_t* obj, lv_event_t event) {
 void mks_draw_print(void) {
 
     char print_file_name[128];
+    char current_status_message[sizeof(print_status_message)];
+    bool show_status_message;
     
     print_setting.cur_spindle_pwr = sys_rt_s_override;
     print_setting.cur_spindle_speed = sys_rt_f_override;
@@ -120,6 +175,8 @@ void mks_draw_print(void) {
     print_setting.carve_staus = CAVRE_START;
 
     resolve_print_filename(print_file_name, sizeof(print_file_name));
+    copy_print_status_message(current_status_message, sizeof(current_status_message));
+    show_status_message = !is_status_message_empty(current_status_message);
 
     mks_pwr_ctrl.pwr_len = PWR_1_PERSEN;
     mks_speed_ctrl.speed_len = SPEED_1_PERSEN;
@@ -131,6 +188,10 @@ void mks_draw_print(void) {
     lv_style_copy(&print_src.print_coord_style, &lv_style_plain_color);
     print_src.print_coord_style.text.font = &lv_font_roboto_28;
     print_src.print_coord_style.text.color = LV_COLOR_WHITE;
+
+    lv_style_copy(&print_src.print_status_style, &lv_style_plain_color);
+    print_src.print_status_style.text.font = &lv_font_roboto_22;
+    print_src.print_status_style.text.color = LV_COLOR_WHITE;
 
     /* Стиль фона индикатора прогресса */
     lv_style_copy(&print_src.print_bar_bg_style, &lv_style_plain_color);
@@ -168,24 +229,24 @@ void mks_draw_print(void) {
     print_src.print_Label_caveR =  label_for_text(mks_global.mks_src, print_src.print_Label_caveR, NULL, 338, 82, LV_ALIGN_IN_TOP_LEFT, "Rapid:0%");
     print_src.print_Label_moveSpeed = label_for_text(mks_global.mks_src, print_src.print_Label_moveSpeed, NULL, 8, 101, LV_ALIGN_IN_TOP_LEFT, "Move:0 mm/min");
 
-    mks_lvgl_img_set_algin(mks_global.mks_src, NULL, &png_w_pos, LV_ALIGN_IN_TOP_LEFT, 15, 145);
-    mks_lvgl_img_set_algin(mks_global.mks_src, NULL, &png_m_pos, LV_ALIGN_IN_TOP_LEFT, 245, 145);
+    mks_lvgl_img_set_algin(mks_global.mks_src, NULL, &png_w_pos, LV_ALIGN_IN_TOP_LEFT, 15, PRINT_COORD_TOP_Y);
+    mks_lvgl_img_set_algin(mks_global.mks_src, NULL, &png_m_pos, LV_ALIGN_IN_TOP_LEFT, 245, PRINT_COORD_TOP_Y);
 
-    print_src.print_Label_x_axis = label_for_text(mks_global.mks_src, print_src.print_Label_x_axis, NULL, 60, 145, LV_ALIGN_IN_TOP_LEFT, "X:");
-    print_src.print_Label_y_axis = label_for_text(mks_global.mks_src, print_src.print_Label_y_axis, NULL, 60, 175, LV_ALIGN_IN_TOP_LEFT, "Y:");
-    print_src.print_Label_z_axis = label_for_text(mks_global.mks_src, print_src.print_Label_z_axis, NULL, 60, 205, LV_ALIGN_IN_TOP_LEFT, "Z:");
+    print_src.print_Label_x_axis = label_for_text(mks_global.mks_src, print_src.print_Label_x_axis, NULL, 60, PRINT_COORD_TOP_Y, LV_ALIGN_IN_TOP_LEFT, "X:");
+    print_src.print_Label_y_axis = label_for_text(mks_global.mks_src, print_src.print_Label_y_axis, NULL, 60, PRINT_COORD_TOP_Y + PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "Y:");
+    print_src.print_Label_z_axis = label_for_text(mks_global.mks_src, print_src.print_Label_z_axis, NULL, 60, PRINT_COORD_TOP_Y + 2 * PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "Z:");
 
-    print_src.print_Label_m_x_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_axis, NULL, 300, 145, LV_ALIGN_IN_TOP_LEFT, "X:");
-    print_src.print_Label_m_y_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_axis, NULL, 300, 175, LV_ALIGN_IN_TOP_LEFT, "Y:");
-    print_src.print_Label_m_z_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_axis, NULL, 300, 205, LV_ALIGN_IN_TOP_LEFT, "Z:");
+    print_src.print_Label_m_x_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_axis, NULL, 300, PRINT_COORD_TOP_Y, LV_ALIGN_IN_TOP_LEFT, "X:");
+    print_src.print_Label_m_y_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_axis, NULL, 300, PRINT_COORD_TOP_Y + PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "Y:");
+    print_src.print_Label_m_z_axis = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_axis, NULL, 300, PRINT_COORD_TOP_Y + 2 * PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "Z:");
 
-    print_src.print_Label_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_x_pos, NULL, 65, 145, LV_ALIGN_IN_TOP_LEFT, "   0   ");
-    print_src.print_Label_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_y_pos, NULL, 65, 175, LV_ALIGN_IN_TOP_LEFT, "   0   ");
-    print_src.print_Label_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_z_pos, NULL, 65, 205, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_x_pos, NULL, 65, PRINT_COORD_TOP_Y, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_y_pos, NULL, 65, PRINT_COORD_TOP_Y + PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_z_pos, NULL, 65, PRINT_COORD_TOP_Y + 2 * PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "   0   ");
 
-    print_src.print_Label_m_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_pos, NULL, 305, 145, LV_ALIGN_IN_TOP_LEFT, "   0   ");
-    print_src.print_Label_m_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_pos, NULL, 305, 175, LV_ALIGN_IN_TOP_LEFT, "   0   ");
-    print_src.print_Label_m_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_pos, NULL, 305, 205, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_m_x_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_x_pos, NULL, 305, PRINT_COORD_TOP_Y, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_m_y_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_y_pos, NULL, 305, PRINT_COORD_TOP_Y + PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "   0   ");
+    print_src.print_Label_m_z_pos = label_for_text(mks_global.mks_src, print_src.print_Label_m_z_pos, NULL, 305, PRINT_COORD_TOP_Y + 2 * PRINT_COORD_ROW_STEP_Y, LV_ALIGN_IN_TOP_LEFT, "   0   ");
 
     lv_label_set_style(print_src.print_Label_x_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
     lv_label_set_style(print_src.print_Label_y_pos, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
@@ -199,6 +260,29 @@ void mks_draw_print(void) {
     lv_label_set_style(print_src.print_Label_m_x_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
     lv_label_set_style(print_src.print_Label_m_y_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
     lv_label_set_style(print_src.print_Label_m_z_axis, LV_LABEL_STYLE_MAIN, &print_src.print_coord_style);
+
+    print_src.print_icon_comment = mks_lvgl_img_set_algin(
+        mks_global.mks_src,
+        print_src.print_icon_comment,
+        &png_comment,
+        LV_ALIGN_IN_TOP_LEFT,
+        PRINT_STATUS_ICON_X,
+        PRINT_STATUS_MSG_Y);
+
+    print_src.print_Label_status_message = mks_lvgl_long_sroll_label_with_wight_set(
+        mks_global.mks_src,
+        print_src.print_Label_status_message,
+        PRINT_STATUS_TEXT_X,
+        PRINT_STATUS_MSG_Y,
+        current_status_message,
+        PRINT_STATUS_TEXT_W);
+    lv_label_set_long_mode(print_src.print_Label_status_message, LV_LABEL_LONG_BREAK);
+    lv_label_set_style(print_src.print_Label_status_message, LV_LABEL_STYLE_MAIN, &print_src.print_status_style);
+
+    lv_obj_set_hidden(print_src.print_icon_comment, !show_status_message);
+    lv_obj_set_hidden(print_src.print_Label_status_message, !show_status_message);
+    strncpy(last_rendered_status_message, current_status_message, sizeof(last_rendered_status_message) - 1);
+    last_rendered_status_message[sizeof(last_rendered_status_message) - 1] = '\0';
 
     Label_print_file_name = mks_lvgl_long_sroll_label_with_wight_set(mks_global.mks_src, Label_print_file_name, 8, 6, print_file_name, 255);
     lv_label_set_long_mode(Label_print_file_name, LV_LABEL_LONG_SROLL_CIRC);
@@ -1180,6 +1264,8 @@ static void resolve_print_filename(char* dst, size_t dst_size) {
 void mks_print_data_updata(void) {
     float machine_pos[MAX_N_AXIS];
     float work_pos[MAX_N_AXIS];
+    char current_status_message[sizeof(print_status_message)];
+    bool show_status_message;
     static char w_x_pos[24];
     static char w_y_pos[24];
     static char w_z_pos[24];
@@ -1220,23 +1306,39 @@ void mks_print_data_updata(void) {
 
     format_print_axis_value(w_x_pos, sizeof(w_x_pos), 'X', work_pos[0]);
     print_src.print_Label_x_pos = mks_lv_label_updata(print_src.print_Label_x_pos, w_x_pos);
-    update_print_coord_label(print_src.print_Label_x_pos, w_x_pos, 70, 145);
+    update_print_coord_label(print_src.print_Label_x_pos, w_x_pos, 70, PRINT_COORD_TOP_Y);
     format_print_axis_value(w_y_pos, sizeof(w_y_pos), 'Y', work_pos[1]);
     print_src.print_Label_y_pos = mks_lv_label_updata(print_src.print_Label_y_pos, w_y_pos);
-    update_print_coord_label(print_src.print_Label_y_pos, w_y_pos, 70, 175);
+    update_print_coord_label(print_src.print_Label_y_pos, w_y_pos, 70, PRINT_COORD_TOP_Y + PRINT_COORD_ROW_STEP_Y);
     format_print_axis_value(w_z_pos, sizeof(w_z_pos), 'Z', work_pos[2]);
     print_src.print_Label_z_pos = mks_lv_label_updata(print_src.print_Label_z_pos, w_z_pos);
-    update_print_coord_label(print_src.print_Label_z_pos, w_z_pos, 70, 205);
+    update_print_coord_label(print_src.print_Label_z_pos, w_z_pos, 70, PRINT_COORD_TOP_Y + 2 * PRINT_COORD_ROW_STEP_Y);
 
     format_print_axis_value(m_x_pos, sizeof(m_x_pos), 'X', machine_pos[0]);
     print_src.print_Label_m_x_pos = mks_lv_label_updata(print_src.print_Label_m_x_pos, m_x_pos);
-    update_print_coord_label(print_src.print_Label_m_x_pos, m_x_pos, 310, 145);
+    update_print_coord_label(print_src.print_Label_m_x_pos, m_x_pos, 310, PRINT_COORD_TOP_Y);
     format_print_axis_value(m_y_pos, sizeof(m_y_pos), 'Y', machine_pos[1]);
     print_src.print_Label_m_y_pos = mks_lv_label_updata(print_src.print_Label_m_y_pos, m_y_pos);
-    update_print_coord_label(print_src.print_Label_m_y_pos, m_y_pos, 310, 175);
+    update_print_coord_label(print_src.print_Label_m_y_pos, m_y_pos, 310, PRINT_COORD_TOP_Y + PRINT_COORD_ROW_STEP_Y);
     format_print_axis_value(m_z_pos, sizeof(m_z_pos), 'Z', machine_pos[2]);
     print_src.print_Label_m_z_pos = mks_lv_label_updata(print_src.print_Label_m_z_pos, m_z_pos);
-    update_print_coord_label(print_src.print_Label_m_z_pos, m_z_pos, 310, 205);
+    update_print_coord_label(print_src.print_Label_m_z_pos, m_z_pos, 310, PRINT_COORD_TOP_Y + 2 * PRINT_COORD_ROW_STEP_Y);
+
+    if (print_src.print_Label_status_message != NULL) {
+        copy_print_status_message(current_status_message, sizeof(current_status_message));
+        show_status_message = !is_status_message_empty(current_status_message);
+
+        if (strcmp(current_status_message, last_rendered_status_message) != 0) {
+            lv_label_set_text(print_src.print_Label_status_message, current_status_message);
+            strncpy(last_rendered_status_message, current_status_message, sizeof(last_rendered_status_message) - 1);
+            last_rendered_status_message[sizeof(last_rendered_status_message) - 1] = '\0';
+        }
+
+        lv_obj_set_hidden(print_src.print_Label_status_message, !show_status_message);
+        if (print_src.print_icon_comment != NULL) {
+            lv_obj_set_hidden(print_src.print_icon_comment, !show_status_message);
+        }
+    }
 
     sync_print_state_ui();
 

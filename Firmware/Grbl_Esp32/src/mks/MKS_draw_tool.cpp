@@ -27,6 +27,8 @@ lv_obj_t* tool_btn_beep;
 lv_obj_t* label_tool_beep;
 lv_obj_t* tool_btn_sculpture_view;
 lv_obj_t* label_tool_sculpture_view;
+lv_obj_t* tool_btn_laser_mode;
+lv_obj_t* label_tool_laser_mode;
 
 lv_obj_t *tool_line1;
 lv_obj_t *tool_line2;
@@ -69,6 +71,16 @@ static void update_sculpture_view_button_label(void) {
             lv_label_set_text(label_tool_sculpture_view, "View:List");
         } else {
             lv_label_set_text(label_tool_sculpture_view, "View:Icon");
+        }
+    }
+}
+
+static void update_laser_mode_button_label(void) {
+    if(label_tool_laser_mode != NULL) {
+        if(laser_mode->get()) {
+            lv_label_set_text(label_tool_laser_mode, "Laser: ON");
+        } else {
+            lv_label_set_text(label_tool_laser_mode, "Laser: OFF");
         }
     }
 }
@@ -134,6 +146,20 @@ static void event_btn_tool_sculpture_view(lv_obj_t* obj, lv_event_t event) {
     }
 }
 
+static void event_btn_tool_laser_mode(lv_obj_t* obj, lv_event_t event) {
+    if (event == LV_EVENT_RELEASED) {
+        static char laser_off_val[] = "0";
+        static char laser_on_val[] = "1";
+
+        if(laser_mode->get()) {
+            laser_mode->setStringValue(laser_off_val);
+        } else {
+            laser_mode->setStringValue(laser_on_val);
+        }
+        update_laser_mode_button_label();
+    }
+}
+
 void mks_tool_heap_info_update(void) {
     if (label_heap_info == NULL) {
         return;
@@ -196,6 +222,10 @@ void mks_draw_tool(void) {
     tool_btn_sculpture_view = mks_lv_btn_set(mks_global.mks_src, tool_btn_sculpture_view, 110, 32, 350, 132, event_btn_tool_sculpture_view);
     label_tool_sculpture_view = label_for_btn_name(tool_btn_sculpture_view, label_tool_sculpture_view, 0, 0, "View:List");
     update_sculpture_view_button_label();
+
+    tool_btn_laser_mode = mks_lv_btn_set(mks_global.mks_src, tool_btn_laser_mode, 110, 32, 350, 182, event_btn_tool_laser_mode);
+    label_tool_laser_mode = label_for_btn_name(tool_btn_laser_mode, label_tool_laser_mode, 0, 0, "Laser: OFF");
+    update_laser_mode_button_label();
     
 
     mks_lvgl_long_sroll_label_with_wight_set_center(mks_global.mks_src, label_board_version, 10, 100, BOARD_NAME, 400);

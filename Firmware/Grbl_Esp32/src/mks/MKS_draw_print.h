@@ -113,6 +113,7 @@ typedef struct {
     lv_style_t print_bar_indic_style;
     lv_style_t print_file_name_style;
     lv_style_t print_coord_style;
+    lv_style_t print_status_style;
     lv_style_t print_sp_style;
 
     /* Label*/
@@ -140,6 +141,7 @@ typedef struct {
     lv_obj_t* print_Label_m_x_axis;
     lv_obj_t* print_Label_m_y_axis;
     lv_obj_t* print_Label_m_z_axis;
+    lv_obj_t* print_Label_status_message;
     lv_obj_t* print_Label_mpos;
     lv_obj_t* print_Label_wpos;
     lv_obj_t* print_Label_popup;
@@ -156,6 +158,7 @@ typedef struct {
     lv_obj_t* print_icon_PWR;
     lv_obj_t* print_icon_SPEED;
     lv_obj_t* print_icon_TIMES;
+    lv_obj_t* print_icon_comment;
     
 }MKS_PRINT_PAGE_t;
 extern MKS_PRINT_PAGE_t print_src;
@@ -215,6 +218,8 @@ void mks_draw_operation(void);
 void mks_print_pwr_set(void);
 void mks_print_speed_set(void);
 void mks_print_data_updata(void);
+void mks_set_print_status_message(const char* message);
+void mks_clear_print_status_message(void);
 void print_send(void);
 
 uint8_t get_print_speed(void);

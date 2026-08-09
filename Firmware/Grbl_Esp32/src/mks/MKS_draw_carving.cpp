@@ -829,6 +829,7 @@ void start_print(void) {
 	char line_num[50];
 	file_popup_select_flag = false;
 	mks_grbl.is_mks_ts35_flag = true;
+	mks_clear_print_status_message();
 
 	mks_ui_page.mks_ui_page = MKS_UI_PAGE_LOADING; 
 	mks_ui_page.wait_count = DEFAULT_UI_COUNT;

@@ -825,6 +825,37 @@ void report_gcode_comment(char* comment) {
     }
 }
 
+void report_operator_message(const char* message, uint8_t client) {
+    uint8_t out_client = client == CLIENT_INPUT ? CLIENT_SERIAL : client;
+
+    if (message == NULL) {
+        message = "";
+    }
+
+    if (out_client == CLIENT_ALL) {
+        grbl_sendf(CLIENT_ALL, "[MSG:%s]\r\n", message);
+    } else {
+        grbl_sendf(out_client, "[MSG:%s]\r\n", message);
+    }
+
+    // Always mirror M117-style operator messages to USB serial.
+    if (out_client != CLIENT_ALL && out_client != CLIENT_SERIAL) {
+        grbl_sendf(CLIENT_SERIAL, "[MSG:%s]\r\n", message);
+    }
+
+#ifdef ENABLE_TELNET
+    // Ensure M117 text reaches telnet apps even when the command source was SD/Serial/WebUI.
+    if (out_client != CLIENT_ALL && !CLIENT_IS_TELNET(out_client)) {
+        for (uint8_t telnet_client = CLIENT_TELNET_MIN; telnet_client <= CLIENT_TELNET_MAX; ++telnet_client) {
+            grbl_sendf(telnet_client, "[MSG:%s]\r\n", message);
+        }
+    }
+#endif
+
+    grbl_notify("Message", message);
+    mks_set_print_status_message(message);
+}
+
 void report_machine_type(uint8_t client) {
     grbl_msg_sendf(client, MsgLevel::Info, "Using machine:%s", MACHINE_NAME);
 }

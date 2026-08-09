@@ -36,6 +36,54 @@ CoordIndex& operator++(CoordIndex& i) {
 static const int32_t MaxLineNumber = 10000000;
 static const uint8_t MaxToolNumber = 255;  // Limited by max unsigned 8-bit value
 
+static bool extract_marlin_m117_message(const char* line, char* message, size_t message_size) {
+    const char* cursor = line;
+
+    while (isspace(*cursor)) {
+        cursor++;
+    }
+
+    if (toupper(*cursor) == 'N') {
+        cursor++;
+        if (!isdigit(*cursor)) {
+            return false;
+        }
+        while (isdigit(*cursor)) {
+            cursor++;
+        }
+        while (isspace(*cursor)) {
+            cursor++;
+        }
+    }
+
+    if (toupper(cursor[0]) != 'M' || cursor[1] != '1' || cursor[2] != '1' || cursor[3] != '7') {
+        return false;
+    }
+
+    if (cursor[4] != '\0' && !isspace(cursor[4])) {
+        return false;
+    }
+
+    cursor += 4;
+    while (isspace(*cursor)) {
+        cursor++;
+    }
+
+    const char* end = cursor + strlen(cursor);
+    while (end > cursor && isspace(end[-1])) {
+        end--;
+    }
+
+    size_t len = end - cursor;
+    if (len >= message_size) {
+        len = message_size - 1;
+    }
+
+    memcpy(message, cursor, len);
+    message[len] = '\0';
+    return true;
+}
+
 // Declare gc extern struct
 parser_state_t gc_state;
 parser_block_t gc_block;
@@ -131,6 +179,15 @@ void collapseGCode(char* line) {
 // exported to grbl's internal functions in terms of (mm, mm/min) and absolute machine
 // coordinates, respectively.
 Error gc_execute_line(char* line, uint8_t client) {
+    char m117_message[96];
+    if (extract_marlin_m117_message(line, m117_message, sizeof(m117_message))) {
+        char tagged_m117_message[112];
+        snprintf(tagged_m117_message, sizeof(tagged_m117_message), "M117:%s", m117_message);
+        protocol_buffer_synchronize();
+        report_operator_message(tagged_m117_message, client);
+        return Error::Ok;
+    }
+
     // Step 0 - remove whitespace and comments and convert to upper case
     collapseGCode(line);
 #ifdef REPORT_ECHO_LINE_RECEIVED

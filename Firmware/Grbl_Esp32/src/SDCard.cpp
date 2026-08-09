@@ -239,6 +239,7 @@ boolean openFile(fs::FS& fs, const char* path) {
     // секунд, и станок всё это время «висел» перед стартом выполнения.
     // Прогресс считаем по байтам (position()/size()) в sd_report_perc_complete(),
     // это не требует предварительного скана и доступно сразу.
+    mks_clear_print_status_message();
     set_sd_state(SDState::BusyPrinting);
     SD_ready_next          = false;  // this will get set to true when Grbl issues "ok" message
     sd_current_line_number = 0;

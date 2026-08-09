@@ -31,6 +31,10 @@
 //#include "grbl.h"
 
 namespace Spindles {
+    bool PWM::inLaserMode() {
+        return laser_mode->get();
+    }
+
     void PWM::init() {
         get_pins_and_settings();
 
@@ -163,12 +167,13 @@ namespace Spindles {
 
         // return 0;
 
-        uint32_t pwm_value;
-
         uint32_t origin_value;
         uint32_t last_value;
-        uint32_t diff_value;
-        uint8_t mode;
+        uint32_t diff_value = 0;
+        uint32_t pwm_value;
+        bool     laser_mode_enabled = inLaserMode();
+        uint32_t active_min_rpm     = laser_mode_enabled ? 0 : _min_rpm;
+        uint32_t active_max_rpm     = laser_mode_enabled ? laser_full_power->get() : _max_rpm;
 
 
         if (_output_pin == UNDEFINED_PIN) {
@@ -179,10 +184,10 @@ namespace Spindles {
         rpm = rpm * sys.spindle_speed_ovr / 100;  // Scale by spindle speed override value (uint8_t percent)
 
         // apply limits
-        if ((_min_rpm >= _max_rpm) || (rpm >= _max_rpm)) {
-            rpm = _max_rpm;
-        } else if (rpm != 0 && rpm <= _min_rpm) {
-            rpm = _min_rpm;
+        if ((active_min_rpm >= active_max_rpm) || (rpm >= active_max_rpm)) {
+            rpm = active_max_rpm;
+        } else if (rpm != 0 && rpm <= active_min_rpm) {
+            rpm = active_min_rpm;
         }
 
         origin_value = sys.spindle_speed;
@@ -190,7 +195,7 @@ namespace Spindles {
 
         sys.spindle_speed = rpm;
 
-        if (_piecewide_linear) {
+        if (_piecewide_linear && !laser_mode_enabled) {
             //pwm_value = piecewise_linear_fit(rpm); TODO
             pwm_value = 0;
             grbl_msg_sendf(CLIENT_ALL, MsgLevel::Info, "Warning: Linear fit not implemented yet.");
@@ -198,6 +203,8 @@ namespace Spindles {
         } else {
             if (rpm == 0) {
                 pwm_value = _pwm_off_value;
+            } else if (laser_mode_enabled) {
+                pwm_value = map_uint32_t(rpm, 0, active_max_rpm, _pwm_off_value, _pwm_max_value);
             } else {
                 // pwm_value = map_uint32_t(rpm, _min_rpm, _max_rpm, _pwm_min_value, _pwm_max_value);
                pwm_value =  calc_pwm_value(rpm);
@@ -215,26 +222,33 @@ namespace Spindles {
             diff_value = origin_value - last_value;
         }
 
-        if(last_value == 0) {  
-            set_output(0);
+        if(last_value == 0) {
+            set_output(_pwm_off_value);
         }
         else if(origin_value < last_value) {
             for(uint32_t i = origin_value; i < last_value; i++) {
-                set_output(calc_pwm_value(i));
-                if((last_value - i) < (diff_value / 2)) { delay(1); }  
+                if (laser_mode_enabled) {
+                    set_output(map_uint32_t(i, 0, active_max_rpm, _pwm_off_value, _pwm_max_value));
+                } else {
+                    set_output(calc_pwm_value(i));
+                }
+                if((last_value - i) < (diff_value / 2) && !laser_mode_enabled) { delay(1); }
             }
         }
         else if(origin_value == last_value) {
-
+            set_output(pwm_value);
         }
         else if(origin_value > last_value) {
             for(uint32_t i = origin_value; i > last_value; i--) {
-                set_output(calc_pwm_value(i));
-                // delay(1);
+                if (laser_mode_enabled) {
+                    set_output(map_uint32_t(i, 0, active_max_rpm, _pwm_off_value, _pwm_max_value));
+                } else {
+                    set_output(calc_pwm_value(i));
+                }
             }
         }
 
-        // set_output(pwm_value);
+        set_output(pwm_value);
 
         return 0;
     }
@@ -244,17 +258,19 @@ namespace Spindles {
             return;  // Block during abort.
         }
 
+        bool apply_delays = use_delays && !inLaserMode();
+
         if (state == SpindleState::Disable) {  // Halt or set spindle direction and rpm.
             sys.spindle_speed = 0;
             stop();
-            if (use_delays && (_current_state != state)) {
+            if (apply_delays && (_current_state != state)) {
                 delay(_spinup_delay);
             }
         } else {
             set_dir_pin(state == SpindleState::Cw);
             set_rpm(rpm);
             set_enable_pin(state != SpindleState::Disable);  // must be done after setting rpm for enable features to work
-            if (use_delays && (_current_state != state)) {
+            if (apply_delays && (_current_state != state)) {
                 delay(_spindown_delay);
             }
         }
@@ -268,10 +284,13 @@ namespace Spindles {
         if (_current_pwm_duty == 0 || _output_pin == UNDEFINED_PIN) {
             return SpindleState::Disable;
         }
+        if (inLaserMode()) {
+            return _current_state;
+        }
         if (_direction_pin != UNDEFINED_PIN) {
             return digitalRead(_direction_pin) ? SpindleState::Cw : SpindleState::Ccw;
         }
-        return SpindleState::Cw;
+        return _current_state;
     }
 
     void PWM::stop() {
@@ -282,14 +301,26 @@ namespace Spindles {
 
     // prints the startup message of the spindle config
     void PWM::config_message() {
-        grbl_msg_sendf(CLIENT_ALL,
-                       MsgLevel::Info,
-                       "PWM spindle Output:%s, Enbl:%s, Dir:%s, Freq:%dHz, Res:%dbits",
-                       pinName(_output_pin).c_str(),
-                       pinName(_enable_pin).c_str(),
-                       pinName(_direction_pin).c_str(),
-                       _pwm_freq,
-                       _pwm_precision);
+        if (inLaserMode()) {
+            grbl_msg_sendf(CLIENT_ALL,
+                           MsgLevel::Info,
+                           "PWM laser mode Output:%s, Enbl:%s, Freq:%dHz, Res:%dbits Laser mode:%s Full power:%d",
+                           pinName(_output_pin).c_str(),
+                           pinName(_enable_pin).c_str(),
+                           _pwm_freq,
+                           _pwm_precision,
+                           laser_mode->getStringValue(),
+                           laser_full_power->get());
+        } else {
+            grbl_msg_sendf(CLIENT_ALL,
+                           MsgLevel::Info,
+                           "PWM spindle Output:%s, Enbl:%s, Dir:%s, Freq:%dHz, Res:%dbits",
+                           pinName(_output_pin).c_str(),
+                           pinName(_enable_pin).c_str(),
+                           pinName(_direction_pin).c_str(),
+                           _pwm_freq,
+                           _pwm_precision);
+        }
     }
 
     void PWM::set_output(uint32_t duty) {
@@ -343,7 +374,12 @@ namespace Spindles {
         digitalWrite(_enable_pin, enable);
     }
 
-    void PWM::set_dir_pin(bool Clockwise) { digitalWrite(_direction_pin, Clockwise); }
+    void PWM::set_dir_pin(bool Clockwise) {
+        if (_direction_pin == UNDEFINED_PIN) {
+            return;
+        }
+        digitalWrite(_direction_pin, Clockwise);
+    }
 
     /*
 		Calculate the highest precision of a PWM based on the frequency in bits
